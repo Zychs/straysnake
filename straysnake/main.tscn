@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://whcycy1rqk5p"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+scale = Vector2(1.683557, 1.0559957)

@@ -1,113 +1,33 @@
-# Stray Snake  
-An action-roguelite prototype where movement *is* the attack.
+# Stray Snake
 
-Stray Snake is a compact, Binding-of-Isaac–style top-down roguelite built around a single escalating mechanic:  
-you play a lone serpent whose body grows segment by segment, and each new segment mutates your entire combat style.
+This repository is a tiny Godot 4 playground that experiments with **ternary movement** for a snake roguelite. The serpent slides along three vectors that are 120° apart instead of the traditional four-direction grid, so you can immediately feel how rooms and combat patterns need to be redesigned for a triangular lattice.
 
-This repository contains the first playable vertical slice: a short dungeon run, a controllable serpent with evolving traits, two enemy archetypes, and a room-to-room combat loop.
+## Quick start
 
----
-
-## Features
-
-### 🐍 Evolving Serpent  
-- The player character is a multi-segment snake.  
-- Each new segment grants a **unique trait** (e.g., fire trail, poison drag, contact aura).  
-- Segments follow the head using queued positions or follower interpolation.  
-- Movement doubles as your primary attack: enemies are damaged by the body’s trail, collision properties, or elemental signatures.
-
-### 🧩 Compact Dungeon Structure  
-- One floor made of several rooms connected linearly or by doors.  
-- Combat rooms lock in until cleared.  
-- Clear rewards: one new segment pickup per room.
-
-### ⚔️ Enemies  
-- **Chaser**: closes distance and deals contact damage.  
-- **Shooter**: attempts to maintain space and fires at intervals.  
-- Room compositions scale difficulty slightly as the run progresses.
-
-### 💥 Combat Flow  
-- No traditional weapon.  
-- Attacks emerge entirely from movement, segment traits, and the player’s ability to weave through crowds.  
-- High-mobility, high-risk gameplay loop.
-
----
-
-## Project Structure
-
-/assets → sprites, shaders, SFX (if included)
-/src → scripts, objects, gameplay logic
-/docs → design notes and concept references
-/build → exported prototypes
-README.md
-LICENSE
-
-yaml
-Copy code
-
-(Directory names may differ per engine.)
-
----
+1. Install [Godot 4.2+](https://godotengine.org/).
+2. Open this folder as a project.
+3. Press <kbd>F5</kbd> to run – the project now boots directly into the ternary movement scene.
 
 ## Controls
 
-- **Move:** WASD or arrow keys  
-- **Aim/Face Direction:** Mouse (engine-dependent)  
-- **Dash (optional):** Shift or Space  
-- **Interact / Confirm:** E or Left Click
+| Action | Key |
+| --- | --- |
+| Rotate left | <kbd>Q</kbd> |
+| Rotate right | <kbd>E</kbd> |
+| Grow a tail segment | <kbd>Space</kbd> |
 
----
+Every few frames the head advances one step along the currently selected vector. The rest of the body is a queue that follows the head, letting you “orbit” targets with short arcs or swing wide to carve equilateral patterns.
 
-## Segment Traits (Prototype Set)
+## Files of interest
 
-- **Fire Trail:** leaves burning patches on the ground.  
-- **Poison Drag:** enemies crossing the trail take DoT.  
-- **Spike Aura:** radial contact damage from the segment’s center.  
-
-Traits are modular and defined as simple components for fast iteration.
-
----
-
-## Build & Run
-
-### GameMaker Studio  
-Open the `.yyp` project file in GameMaker Studio 2.  
-Run via the built-in runner.
-
-### Godot  
-Open the project in Godot 4.x.  
-Run using the default scene.
-
----
+- `snake.gd` – self-contained Node2D that handles movement, growth, and debug rendering of the triangular grid.
+- `2d_min_gfx.tscn` – the minimal scene instantiating the snake Node2D.
+- `project.godot` – project configuration; now points to the correct main scene so the prototype runs immediately.
 
 ## Roadmap
 
-### Vertical Slice (Current)
-- Basic movement & collision  
-- Segment growth and trait system  
-- Small dungeon with fixed rooms  
-- Two enemy types  
-- Win/lose end screens
+- Add proper collision so the snake can’t overlap itself.
+- Build combat rooms around the triangular flow.
+- Drop-in powerups that temporarily bend the 120° rules.
 
-### Near-Term Additions  
-- Procedural dungeon layout  
-- Additional segment traits  
-- Boss encounter  
-- Meta-progression hooks  
-- Shader-based neon serpent rendering
-
----
-
-## License
-MIT License (or specify your preferred license).
-
----
-
-## Credits
-Design & Programming: <Your Name>  
-Special thanks to early testers, supporters, and collaborators.
-
----
-
-## Notes
-This project is in active development and intended as a fast prototype for presenting mechanics, gameplay feel, and creative direction. Code and systems are structured for rapid iteration rather than long-term architectural stability.
+Contributions and experiments are welcome – the entire prototype is intentionally tiny so it’s easy to remix.

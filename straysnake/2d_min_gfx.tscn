@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" uid="uid://dj2os1k7d7e8i" path="res://fail/mk1snake.gd" id="1_i6js0"]
+
+[node name="ez-gfx-snake" type="Node2D"]
+
+[node name="snake" type="Node2D" parent="."]
+script = ExtResource("1_i6js0")

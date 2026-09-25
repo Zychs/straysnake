@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SNAKE-MAN: TOROIDAL EDITION</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <style>
         body {
             background: #111;
@@ -19,8 +22,10 @@
             font-family: 'Courier New', monospace;
         }
         canvas {
-            border: 4px solid #333;
-            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+            border: 6px solid #222;
+            border-radius: 18px;
+            box-shadow: 0 0 0 2px #333, 0 0 30px rgba(0, 255, 0, 0.18), inset 0 0 40px #000;
+            image-rendering: pixelated;
             background: #000;
             width: min(600px, 92vw);
             height: auto;
@@ -31,8 +36,10 @@
             flex-wrap: wrap;
             justify-content: center;
             gap: 6px 36px;
-            font-size: 24px;
-            margin-bottom: 6px;
+            font-family: 'Press Start 2P', 'Courier New', monospace;
+            font-size: 16px;
+            text-shadow: 2px 2px 0 #030;
+            margin-bottom: 10px;
         }
         #time.low { color: #f33; }
         .kin {
@@ -77,7 +84,7 @@
     <canvas id="gameCanvas" width="600" height="600"></canvas>
 
     <div class="help">
-        ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • N NEW MAP<br>
+        ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • C CRT • N NEW MAP<br>
         THE WORLD WRAPS (TOROIDAL LOGIC) • <span style="color:#55f">BLUE WALLS</span> ARE SOLID: CRASHING COSTS A LIFE<br>
         EAT YELLOW DOTS TO GROW • SCORE ALL YOU CAN BEFORE THE 5:00 CLOCK RUNS OUT<br>
         GHOSTS READ YOUR MOTION, AIM, LOCK, THEN LUNGE: <span style="color:#ddd">BREAK YOUR RHYTHM WHEN A RETICLE LOCKS</span><br>
@@ -92,7 +99,10 @@
 
 <script>
     const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
+    const dctx = canvas.getContext('2d');          // the visible screen (after the CRT pass)
+    const scene = document.createElement('canvas'); // the game is drawn here first
+    scene.width = canvas.width; scene.height = canvas.height;
+    const ctx = scene.getContext('2d');
     const scoreEl = document.getElementById('score');
     const hiEl = document.getElementById('hi');
     const livesEl = document.getElementById('lives');
@@ -616,6 +626,7 @@
         if (KEYMAP[k]) { e.preventDefault(); pressDir(KEYMAP[k]); return; }
         if (k === 'x') { showDerivs = !showDerivs; return; }
         if (k === 'm') { showMinimap = !showMinimap; return; }
+        if (k === 'c') { crtOn = !crtOn; return; }
         if (k === 'n' && (state === 'ready' || state === 'over' || state === 'paused')) { restart(true); return; }
         if (k === ' ' || k === 'p') {
             e.preventDefault();
@@ -758,117 +769,267 @@
     }
 
     // --- RENDERING (camera follows the head; everything is drawn relative to it) ---
+    //
+    // Everything is pixel art on a sub-pixel grid: each 20px tile is 10x10 "sub-pixels" of 2px.
+    // Sprites are composed once, sub-pixel by sub-pixel, into small cached canvases with a
+    // highlight / base / shadow ramp and ordered dithering between tones. The scene is drawn to
+    // an offscreen canvas, then presented through a CRT pass (bloom, scanlines, vignette).
+
+    const P = 2;                       // sub-pixel size in screen px
+    const S = GRID_SIZE / P;           // sprite size in sub-pixels (10)
+    const snap = v => Math.round(v / P) * P;
+    const FONT = "'Press Start 2P', 'Courier New', monospace";
+    let crtOn = true;
 
     const sx = x => W / 2 + wdeltaF(cam.x, x) * GRID_SIZE;   // screen center of world column x
     const sy = y => W / 2 + wdeltaF(cam.y, y) * GRID_SIZE;
     const onScreen = (x, y) => Math.abs(wdeltaF(cam.x, x)) < VIEW / 2 + 2 && Math.abs(wdeltaF(cam.y, y)) < VIEW / 2 + 2;
 
-    function drawArrow(x, y, dx, dy, color) {
+    // --- colour + dithering helpers ---
+    function hexToRgb(h) {
+        h = h.replace('#', '');
+        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+        const n = parseInt(h, 16);
+        return [n >> 16 & 255, n >> 8 & 255, n & 255];
+    }
+    const rgbStr = ([r, g, b]) => `rgb(${r | 0},${g | 0},${b | 0})`;
+    const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+    // Two-tone ramp: a highlight and a shadow around the base colour.
+    function tones(base) {
+        const c = typeof base === 'string' ? hexToRgb(base) : base;
+        return {
+            hi: rgbStr(mix(c, [255, 255, 255], 0.45)),
+            base: rgbStr(c),
+            lo: rgbStr(mix(c, [0, 0, 40], 0.45)),
+            spec: rgbStr(mix(c, [255, 255, 255], 0.85)),
+        };
+    }
+    const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]].map(r => r.map(v => (v + 0.5) / 16));
+    const dither = (i, j, t) => t > BAYER[j & 3][i & 3];
+
+    // Light comes from the top-left. L in ~[-1, 1]; dither across the band edges.
+    function litTone(t, i, j, L) {
+        if (L > 0.55) return t.hi;
+        if (L > 0.2) return dither(i, j, (L - 0.2) / 0.35) ? t.hi : t.base;
+        if (L > -0.2) return t.base;
+        if (L > -0.55) return dither(i, j, (-0.2 - L) / 0.35) ? t.lo : t.base;
+        return t.lo;
+    }
+
+    // Compose a sprite one sub-pixel at a time. fn(i, j) returns a colour or null.
+    function makeSprite(fn, size = S) {
+        const c = document.createElement('canvas');
+        c.width = c.height = size * P;
+        const x = c.getContext('2d');
+        for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
+            const col = fn(i, j);
+            if (col) { x.fillStyle = col; x.fillRect(i * P, j * P, P, P); }
+        }
+        return c;
+    }
+    const spriteCache = new Map();
+    function cached(key, build) {
+        let s = spriteCache.get(key);
+        if (!s) { s = build(); spriteCache.set(key, s); }
+        return s;
+    }
+
+    // --- sprites ---
+    function pacSprite(di, frame) {
+        return cached('pac' + di + frame, () => {
+            const t = tones('#FFD700');
+            const d = DIRS[di];
+            const fa = Math.atan2(d.y, d.x);
+            const mouth = [0.12, 0.45, 0.8][frame];
+            const perp = d.x !== 0 ? { x: 0, y: -1 } : { x: -1, y: 0 };
+            const ex = Math.round(4.5 + d.x * 0.6 + perp.x * 2.4 - 0.5), ey = Math.round(4.5 + d.y * 0.6 + perp.y * 2.4 - 0.5);
+            return makeSprite((i, j) => {
+                const dx = i - 4.5, dy = j - 4.5, r = Math.hypot(dx, dy);
+                if (r > 4.95) return null;
+                let a = Math.atan2(dy, dx) - fa;
+                a = Math.atan2(Math.sin(a), Math.cos(a));
+                if (Math.abs(a) < mouth && r > 0.8) return null;
+                if (i === ex && j === ey) return '#2a1400';                   // eye
+                if (i === ex && j === ey - 1) return t.lo;                     // brow shadow
+                const L = -(dx * 0.7 + dy * 0.7) / 4.5;
+                if (i === 2 && j === 2) return t.spec;                         // specular glint
+                if (r > 4.1 && L < 0.1) return t.lo;                           // rim shadow
+                return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    const GHOST_EYES = [{ x: 2, y: 3 }, { x: 6, y: 3 }];
+    // look: 0-3 = DIRS index, 4 = straight ahead. mode: normal | daze | flash
+    function ghostSprite(color, frame, look, mode) {
+        return cached(`g${color}${frame}${look}${mode}`, () => {
+            const body = mode === 'daze' ? '#2233ff' : mode === 'flash' ? '#e8e8f0' : color;
+            const t = tones(body);
+            const feature = mode === 'flash' ? '#ff3030' : '#ffc0b0';
+            const lk = look < 4 ? DIRS[look] : { x: 0, y: 0 };
+            return makeSprite((i, j) => {
+                // silhouette: dome + body + animated skirt teeth
+                let inside;
+                if (j < 5) inside = Math.hypot(i - 4.5, j - 4.8) <= 4.9;
+                else if (j < 9) inside = true;
+                else inside = (i + frame) % 3 !== 2;
+                if (!inside) return null;
+
+                if (mode === 'normal') {
+                    for (const e of GHOST_EYES) {
+                        const ei = i - e.x, ej = j - e.y;
+                        if (ei < 0 || ei > 1 || ej < 0 || ej > 2) continue;
+                        const pi = lk.x < 0 ? 0 : lk.x > 0 ? 1 : (e.x < 4 ? 1 : 0);
+                        const pj = lk.y < 0 ? 0 : lk.y > 0 ? 2 : 1;
+                        if (ei === pi && ej === pj) return '#1a2cff';        // pupil
+                        return ej === 2 ? '#b8b8d8' : '#ffffff';              // two-tone eye white
+                    }
+                } else {
+                    if ((i === 3 || i === 6) && j === 3) return feature;       // beady eyes
+                    if (j === 6 || j === 7) {                                  // wobbly mouth
+                        if (i >= 1 && i <= 8 && (i % 2 === 0 ? j === 6 : j === 7)) return feature;
+                    }
+                }
+                if (i === 2 && j === 1) return t.spec;
+                const L = -(((i - 4.5) / 4.5) * 0.8 + ((j - 4.5) / 4.5) * 0.45);
+                if (i === 9 || (j === 9) || (j >= 5 && i === 8 && dither(i, j, 0.5))) return t.lo;
+                return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    const BODY_HEAD = hexToRgb('#FFB000'), BODY_TAIL = hexToRgb('#8a3a00');
+    function bodySprite(k) { // k: 0 (near head) .. 7 (tail tip)
+        return cached('body' + k, () => {
+            const t = tones(mix(BODY_HEAD, BODY_TAIL, k / 7));
+            return makeSprite((i, j) => {
+                if ((i === 0 || i === 9) && (j === 0 || j === 9)) return null;   // rounded corners
+                if (j === 0 || i === 0) return t.hi;                              // lit edge
+                if (j === 9 || i === 9) return t.lo;                              // shadow edge
+                // one raised diamond scale per segment
+                const d = Math.abs(i - 4.5) + Math.abs(j - 4.5);
+                const L = -((i - 4.5) * 0.7 + (j - 4.5) * 0.7) / 4.5;
+                if (d <= 3) return (i === 4 && j === 2) ? t.spec : litTone(t, i, j, L * 1.4 + 0.1);
+                if (d <= 4) return L > 0.3 ? t.base : t.lo;                      // scale outline
+                return dither(i, j, 0.5 - L) ? t.lo : t.base;
+            });
+        });
+    }
+
+    function pelletSprite(frame) {
+        return cached('pellet' + frame, () => {
+            const t = tones('#FFEE00');
+            const r = frame ? 2.9 : 2.4;
+            return makeSprite((i, j) => {
+                const dx = i - 4.5, dy = j - 4.5, d = Math.hypot(dx, dy);
+                if (d > r) return null;
+                if (i === 4 && j === 3) return '#ffffff';
+                const L = -(dx * 0.7 + dy * 0.7) / r;
+                return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    // Wall tile keyed by which neighbours are also wall (1=up 2=right 4=down 8=left).
+    function wallSprite(mask) {
+        return cached('wall' + mask, () => makeSprite((i, j) => {
+            const oU = !(mask & 1), oR = !(mask & 2), oD = !(mask & 4), oL = !(mask & 8);
+            if ((oU && j === 0) || (oL && i === 0)) return '#9a9aff';        // lit rim
+            if ((oD && j === 9) || (oR && i === 9)) return '#2626b8';        // shadow rim
+            if ((oU && j === 1) || (oL && i === 1)) return '#5050f0';
+            if ((oD && j === 8) || (oR && i === 8)) return '#1c1c88';
+            return (i % 2 === 0 && j % 2 === 0) ? '#1c1c70' : '#0c0c3a';     // 2x2-dithered fill
+        }));
+    }
+
+    // --- pixel primitives ---
+    function pixelLine(x0, y0, x1, y1, color, every = 1) {
+        const len = Math.hypot(x1 - x0, y1 - y0);
+        const n = Math.max(1, Math.round(len / P));
+        ctx.fillStyle = color;
+        for (let k = 0; k <= n; k += every) {
+            const t = k / n;
+            ctx.fillRect(snap(x0 + (x1 - x0) * t) - P / 2, snap(y0 + (y1 - y0) * t) - P / 2, P, P);
+        }
+    }
+    function pixelArrow(x, y, dx, dy, color) {
         const len = Math.hypot(dx, dy);
-        if (len < 2) return;
-        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + dx, y + dy); ctx.stroke();
+        if (len < 4) return;
+        pixelLine(x, y, x + dx, y + dy, color);
         const ang = Math.atan2(dy, dx);
-        ctx.beginPath();
-        ctx.moveTo(x + dx, y + dy);
-        ctx.lineTo(x + dx - 7 * Math.cos(ang - 0.45), y + dy - 7 * Math.sin(ang - 0.45));
-        ctx.lineTo(x + dx - 7 * Math.cos(ang + 0.45), y + dy - 7 * Math.sin(ang + 0.45));
-        ctx.closePath(); ctx.fill();
+        for (const s of [-0.6, 0.6]) {
+            pixelLine(x + dx, y + dy, x + dx - 8 * Math.cos(ang + s), y + dy - 8 * Math.sin(ang + s), color);
+        }
+    }
+    function pixelRing(cx, cy, r, color) {
+        ctx.fillStyle = color;
+        const n = Math.max(10, Math.round(r * 1.1));
+        for (let k = 0; k < n; k++) {
+            const a = k / n * Math.PI * 2;
+            ctx.fillRect(snap(cx + Math.cos(a) * r) - P / 2, snap(cy + Math.sin(a) * r) - P / 2, P, P);
+        }
+    }
+    // Text with a hard two-tone drop shadow.
+    function pixelText(text, x, y, size, color, shadow = '#000') {
+        ctx.font = `${size}px ${FONT}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = shadow;
+        ctx.fillText(text, snap(x) + P, snap(y) + P);
+        ctx.fillStyle = color;
+        ctx.fillText(text, snap(x), snap(y));
     }
 
     function drawTiles() {
         const bx = Math.floor(cam.x), by = Math.floor(cam.y);
         const half = VIEW / 2 + 2;
         const g = GRID_SIZE;
+        ctx.fillStyle = '#1a1a1a';
         for (let j = -half; j <= half; j++) {
             for (let i = -half; i <= half; i++) {
                 const wx = bx + i, wy = by + j;
-                const left = W / 2 + (wx - cam.x) * g - g / 2;
-                const top = W / 2 + (wy - cam.y) * g - g / 2;
+                const left = snap(W / 2 + (wx - cam.x) * g - g / 2);
+                const top = snap(W / 2 + (wy - cam.y) * g - g / 2);
                 if (!isWall(wx, wy)) {
-                    ctx.strokeStyle = '#111';
-                    ctx.lineWidth = 1;
-                    ctx.strokeRect(left + 0.5, top + 0.5, g, g);
+                    ctx.fillRect(left, top, P, P);   // faint floor stud at each tile corner
                     continue;
                 }
-                // Pac-Man style walls: dark fill, bright edges where they face open floor
-                ctx.fillStyle = '#08082e';
-                ctx.fillRect(left, top, g, g);
-                ctx.strokeStyle = '#3333ff';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                if (!isWall(wx, wy - 1)) { ctx.moveTo(left, top + 1); ctx.lineTo(left + g, top + 1); }
-                if (!isWall(wx, wy + 1)) { ctx.moveTo(left, top + g - 1); ctx.lineTo(left + g, top + g - 1); }
-                if (!isWall(wx - 1, wy)) { ctx.moveTo(left + 1, top); ctx.lineTo(left + 1, top + g); }
-                if (!isWall(wx + 1, wy)) { ctx.moveTo(left + g - 1, top); ctx.lineTo(left + g - 1, top + g); }
-                ctx.stroke();
+                const mask = (isWall(wx, wy - 1) ? 1 : 0) | (isWall(wx + 1, wy) ? 2 : 0) | (isWall(wx, wy + 1) ? 4 : 0) | (isWall(wx - 1, wy) ? 8 : 0);
+                ctx.drawImage(wallSprite(mask), left, top);
+                ctx.fillStyle = '#1a1a1a';
             }
         }
     }
+
+    const lookIndex = (dx, dy) => {
+        if (!dx && !dy) return 4;
+        return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+    };
 
     function drawGhost(g, now) {
         if (!onScreen(g.x, g.y)) return;
         const s = GRID_SIZE;
         let x = sx(g.x) - s / 2, y = sy(g.y) - s / 2;
         if (g.state === 'aim') { // trembling wind-up
-            const amp = g.locked ? 1.5 : 0.8;
-            x += (Math.random() - 0.5) * 2 * amp; y += (Math.random() - 0.5) * 2 * amp;
+            const amp = g.locked ? 2 : 1;
+            x += Math.round((Math.random() - 0.5) * 2 * amp) * P; y += Math.round((Math.random() - 0.5) * 2 * amp) * P;
         }
-        let col = g.color;
-        if (g.state === 'daze') {
-            const blink = g.t > DAZE_MS - 500 && Math.floor(now / 100) % 2;
-            col = blink ? '#fff' : '#2233ff';
-        }
+        const frame = Math.floor(now / 150) % 2;
+        let mode = 'normal';
+        if (g.state === 'daze') mode = (g.t > DAZE_MS - 500 && Math.floor(now / 100) % 2) ? 'flash' : 'daze';
+        let look = lookIndex(g.dir.x, g.dir.y);
+        if (g.state === 'aim') look = lookIndex(wdelta(g.x, g.target.x), wdelta(g.y, g.target.y));
 
-        ctx.globalAlpha = g.fade;
         // lunge afterimages
         if (g.state === 'lunge') {
             g.trail.forEach((p, i) => {
-                ctx.globalAlpha = g.fade * (0.35 - i * 0.08);
-                ctx.fillStyle = g.color;
-                ctx.fillRect(sx(p.x) - s / 2 + 3, sy(p.y) - s / 2 + 3, s - 6, s - 6);
+                ctx.globalAlpha = g.fade * (0.4 - i * 0.09);
+                ctx.drawImage(ghostSprite(g.color, frame, look, mode), snap(sx(p.x) - s / 2), snap(sy(p.y) - s / 2));
             });
-            ctx.globalAlpha = g.fade;
         }
-
-        const cx = x + s / 2;
-        ctx.fillStyle = col;
-        ctx.beginPath();
-        ctx.arc(cx, y + s * 0.46, s * 0.42, Math.PI, 0);
-        ctx.lineTo(x + s * 0.92, y + s * 0.95);
-        const bumps = 3, bw = (s * 0.84) / bumps;
-        const wob = Math.floor(now / 150) % 2;
-        for (let i = 0; i < bumps * 2; i++) {
-            const px = x + s * 0.92 - (i + 1) * bw / 2;
-            const py = (i + wob) % 2 === 0 ? y + s * 0.78 : y + s * 0.95;
-            ctx.lineTo(px, py);
-        }
-        ctx.lineTo(x + s * 0.08, y + s * 0.46);
-        ctx.closePath();
-        ctx.fill();
-
-        // eyes look where the ghost is heading (or aiming)
-        let lx = g.dir.x, ly = g.dir.y;
-        if (g.state === 'aim') {
-            const dx = wdelta(g.x, g.target.x), dy = wdelta(g.y, g.target.y);
-            const m = Math.hypot(dx, dy) || 1; lx = dx / m; ly = dy / m;
-        }
-        if (g.state === 'daze') {
-            ctx.fillStyle = '#fcc';
-            ctx.fillRect(cx - 5, y + 7, 3, 3); ctx.fillRect(cx + 2, y + 7, 3, 3);
-        } else {
-            ctx.fillStyle = 'white';
-            ctx.beginPath(); ctx.arc(cx - 4, y + 8, 3.2, 0, Math.PI * 2); ctx.arc(cx + 4, y + 8, 3.2, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#1133ff';
-            ctx.beginPath(); ctx.arc(cx - 4 + lx * 1.6, y + 8 + ly * 1.6, 1.7, 0, Math.PI * 2); ctx.arc(cx + 4 + lx * 1.6, y + 8 + ly * 1.6, 1.7, 0, Math.PI * 2); ctx.fill();
-        }
-        if (g.state === 'aim' && g.locked) {
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 14px Courier New';
-            ctx.textAlign = 'center';
-            ctx.fillText('!', cx, y - 3);
-        }
+        ctx.globalAlpha = g.fade;
+        ctx.drawImage(ghostSprite(g.color, frame, look, mode), snap(x), snap(y));
         ctx.globalAlpha = 1;
+        if (g.state === 'aim' && g.locked) pixelText('!', x + s / 2, y - 3, 10, '#fff', g.color);
     }
 
     function drawAim(g, now) {
@@ -877,28 +1038,24 @@
         const progress = Math.min(1, g.t / AIM_MS);
 
         ctx.save();
-        ctx.strokeStyle = g.color;
-        ctx.globalAlpha = g.locked ? 0.85 : 0.35 + 0.3 * progress;
-        ctx.lineWidth = g.locked ? 2 : 1;
-        ctx.setLineDash(g.locked ? [] : [4, 4]);
-        ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(tx, ty); ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.globalAlpha = g.locked ? 0.9 : 0.35 + 0.35 * progress;
+        pixelLine(fx, fy, tx, ty, g.color, g.locked ? 1 : 3);
 
         // reticle
-        const r = g.locked ? GRID_SIZE * 0.6 : GRID_SIZE * (1.4 - 0.8 * progress) + Math.sin(now / 60) * 1.5;
-        ctx.globalAlpha = g.locked ? 1 : 0.7;
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(tx, ty, r, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(tx - r - 4, ty); ctx.lineTo(tx - r + 4, ty);
-        ctx.moveTo(tx + r - 4, ty); ctx.lineTo(tx + r + 4, ty);
-        ctx.moveTo(tx, ty - r - 4); ctx.lineTo(tx, ty - r + 4);
-        ctx.moveTo(tx, ty + r - 4); ctx.lineTo(tx, ty + r + 4);
-        ctx.stroke();
-        if (g.locked) {
-            ctx.globalAlpha = 0.25 + 0.2 * Math.sin(now / 40);
+        const r = g.locked ? GRID_SIZE * 0.7 : GRID_SIZE * (1.5 - 0.8 * progress) + Math.sin(now / 60) * 1.5;
+        ctx.globalAlpha = g.locked ? 1 : 0.75;
+        pixelRing(tx, ty, r, g.color);
+        for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            pixelLine(tx + ux * (r - 4), ty + uy * (r - 4), tx + ux * (r + 4), ty + uy * (r + 4), g.color);
+        }
+        if (g.locked) { // dithered, pulsing target cell
+            const on = Math.floor(now / 70) % 2;
             ctx.fillStyle = g.color;
-            ctx.fillRect(tx - GRID_SIZE / 2, ty - GRID_SIZE / 2, GRID_SIZE, GRID_SIZE);
+            ctx.globalAlpha = 0.55;
+            const L = snap(tx - GRID_SIZE / 2), T = snap(ty - GRID_SIZE / 2);
+            for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+                if ((i + j + on) % 2 === 0) ctx.fillRect(L + i * P, T + j * P, P, P);
+            }
         }
         ctx.restore();
     }
@@ -910,14 +1067,12 @@
         ctx.fillStyle = '#f0f';
         for (let T = 1; T <= 10; T++) {
             const p = predict(2, T);
-            ctx.globalAlpha = 0.35 * (1 - T / 12);
-            ctx.beginPath();
-            ctx.arc(hx + (p.x - kin.ux) * GRID_SIZE, hy + (p.y - kin.uy) * GRID_SIZE, 2, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.globalAlpha = 0.45 * (1 - T / 12);
+            ctx.fillRect(snap(hx + (p.x - kin.ux) * GRID_SIZE) - P / 2, snap(hy + (p.y - kin.uy) * GRID_SIZE) - P / 2, P, P);
         }
         ctx.globalAlpha = 0.8;
-        drawArrow(hx, hy, kin.v.x * GRID_SIZE * 3, kin.v.y * GRID_SIZE * 3, '#0ff');
-        drawArrow(hx, hy, kin.a.x * GRID_SIZE * 10, kin.a.y * GRID_SIZE * 10, '#f0f');
+        pixelArrow(hx, hy, kin.v.x * GRID_SIZE * 3, kin.v.y * GRID_SIZE * 3, '#0ff');
+        pixelArrow(hx, hy, kin.a.x * GRID_SIZE * 10, kin.a.y * GRID_SIZE * 10, '#f0f');
         ctx.restore();
     }
 
@@ -926,27 +1081,16 @@
         ctx.globalAlpha = blink ? 0.3 : 1;
         const g = GRID_SIZE;
 
-        // body (tail fades out)
         for (let i = snake.length - 1; i >= 1; i--) {
             const part = snake[i];
-            const t = i / snake.length;
-            ctx.fillStyle = `hsl(${39 - t * 14}, 100%, ${50 - t * 18}%)`;
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 2;
-            ctx.fillRect(sx(part.x) - g / 2, sy(part.y) - g / 2, g, g);
-            ctx.strokeRect(sx(part.x) - g / 2, sy(part.y) - g / 2, g, g);
+            const k = Math.min(7, Math.floor((i / snake.length) * 8));
+            ctx.drawImage(bodySprite(k), snap(sx(part.x) - g / 2), snap(sy(part.y) - g / 2));
         }
 
         // head: the "Pac" in Snake-Man, chomping in the direction of travel
-        const hx = sx(snake[0].x), hy = sy(snake[0].y);
-        const ang = Math.atan2(direction.y, direction.x);
-        const mouth = state === 'play' ? 0.08 + 0.3 * Math.abs(Math.sin(now / 70)) : 0.25;
-        ctx.fillStyle = '#FFD700';
-        ctx.beginPath();
-        ctx.moveTo(hx, hy);
-        ctx.arc(hx, hy, g / 2 + 1, ang + mouth, ang + Math.PI * 2 - mouth);
-        ctx.closePath();
-        ctx.fill();
+        const di = DIRS.findIndex(d => d.x === direction.x && d.y === direction.y);
+        const frame = state === 'play' ? [0, 1, 2, 1][Math.floor(now / 60) % 4] : 1;
+        ctx.drawImage(pacSprite(di, frame), snap(sx(snake[0].x) - g / 2), snap(sy(snake[0].y) - g / 2));
         ctx.globalAlpha = 1;
     }
 
@@ -973,19 +1117,73 @@
             ctx.fillRect(ox + snake[0].x * s - 1.5, oy + snake[0].y * s - 1.5, 4.5, 4.5);
         }
         ctx.restore();
-        ctx.strokeStyle = '#333';
-        ctx.strokeRect(ox - 0.5, oy - 0.5, size + 1, size + 1);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(ox - 2, oy - 2, size + 4, 2); ctx.fillRect(ox - 2, oy + size, size + 4, 2);
+        ctx.fillRect(ox - 2, oy, 2, size); ctx.fillRect(ox + size, oy, 2, size);
     }
 
     function drawOverlay(lines) {
-        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        // dithered darkening instead of a flat wash
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.fillRect(0, 0, W, canvas.height);
-        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        for (let y = 0; y < canvas.height; y += P * 2) ctx.fillRect(0, y, W, P);
         lines.forEach(([text, size, color], i) => {
-            ctx.font = `bold ${size}px Courier New`;
-            ctx.fillStyle = color;
-            ctx.fillText(text, W / 2, canvas.height / 2 - 50 + i * 38);
+            pixelText(text, W / 2, canvas.height / 2 - 56 + i * 36, size, color, i === 0 ? '#401010' : '#000');
         });
+    }
+
+    // --- CRT PASS ---
+    const bloomA = document.createElement('canvas'); bloomA.width = bloomA.height = W / 4;
+    const bloomB = document.createElement('canvas'); bloomB.width = bloomB.height = W / 10;
+    const bctxA = bloomA.getContext('2d'), bctxB = bloomB.getContext('2d');
+    const crtOverlay = document.createElement('canvas');
+    crtOverlay.width = W; crtOverlay.height = canvas.height;
+    (() => {
+        const o = crtOverlay.getContext('2d');
+        // scanlines: darken the lower half of every sub-pixel row
+        o.fillStyle = 'rgba(0,0,0,0.28)';
+        for (let y = 1; y < crtOverlay.height; y += P) o.fillRect(0, y, W, 1);
+        // faint aperture-grille tint
+        const tints = ['rgba(255,0,0,0.035)', 'rgba(0,255,0,0.035)', 'rgba(0,0,255,0.035)'];
+        for (let x = 0; x < W; x++) { o.fillStyle = tints[x % 3]; o.fillRect(x, 0, 1, crtOverlay.height); }
+        // vignette
+        const v = o.createRadialGradient(W / 2, W / 2, W * 0.3, W / 2, W / 2, W * 0.75);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.45)');
+        o.fillStyle = v;
+        o.fillRect(0, 0, W, crtOverlay.height);
+    })();
+
+    function present(now) {
+        dctx.globalCompositeOperation = 'source-over';
+        dctx.globalAlpha = 1;
+        dctx.imageSmoothingEnabled = false;
+        dctx.drawImage(scene, 0, 0);
+        if (!crtOn) return;
+
+        // bloom: downsample twice (cheap blur), add back on top
+        bctxA.imageSmoothingEnabled = bctxB.imageSmoothingEnabled = true;
+        bctxA.clearRect(0, 0, bloomA.width, bloomA.height);
+        bctxA.drawImage(scene, 0, 0, bloomA.width, bloomA.height);
+        bctxB.clearRect(0, 0, bloomB.width, bloomB.height);
+        bctxB.drawImage(bloomA, 0, 0, bloomB.width, bloomB.height);
+        dctx.imageSmoothingEnabled = true;
+        dctx.globalCompositeOperation = 'lighter';
+        dctx.globalAlpha = 0.28;
+        dctx.drawImage(bloomA, 0, 0, W, canvas.height);
+        dctx.globalAlpha = 0.32;
+        dctx.drawImage(bloomB, 0, 0, W, canvas.height);
+
+        dctx.globalCompositeOperation = 'source-over';
+        dctx.globalAlpha = 1;
+        dctx.drawImage(crtOverlay, 0, 0);
+        // a whisper of flicker and a slow rolling bar
+        const barY = (now / 12) % (canvas.height + 120) - 60;
+        dctx.fillStyle = 'rgba(255,255,255,0.025)';
+        dctx.fillRect(0, barY, W, 60);
+        dctx.fillStyle = `rgba(0,0,0,${0.02 + Math.random() * 0.025})`;
+        dctx.fillRect(0, 0, W, canvas.height);
     }
 
     const fmtTime = ms => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
@@ -996,16 +1194,16 @@
         cam.x = wrap(cam.x + wdeltaF(cam.x, snake[0].x) * k);
         cam.y = wrap(cam.y + wdeltaF(cam.y, snake[0].y) * k);
 
+        ctx.imageSmoothingEnabled = false;
         ctx.fillStyle = 'black';
         ctx.fillRect(0, 0, W, canvas.height);
         drawTiles();
 
         // Food (pulsing pellets)
-        ctx.fillStyle = '#FFFF00';
-        const pr = GRID_SIZE / 2.5 + Math.sin(now / 150) * 1.2;
+        const pf = Math.floor(now / 220) % 2;
         pellets.forEach(p => {
             if (!onScreen(p.x, p.y)) return;
-            ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), pr, 0, Math.PI * 2); ctx.fill();
+            ctx.drawImage(pelletSprite(pf), snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2));
         });
 
         // Attack telegraphs under everything else
@@ -1016,13 +1214,10 @@
         ghosts.forEach(g => { if (g.active) drawGhost(g, now); });
 
         // Popups
-        ctx.textAlign = 'center';
-        ctx.font = 'bold 14px Courier New';
         popups = popups.filter(p => (p.t += dt) < 900);
         popups.forEach(p => {
             ctx.globalAlpha = 1 - p.t / 900;
-            ctx.fillStyle = p.color;
-            ctx.fillText(p.text, sx(p.x), sy(p.y) - GRID_SIZE / 2 - p.t / 30);
+            pixelText(p.text, sx(p.x), sy(p.y) - GRID_SIZE / 2 - p.t / 30, 10, p.color);
         });
         ctx.globalAlpha = 1;
 
@@ -1035,9 +1230,11 @@
             flash = Math.max(0, flash - dt / 400);
         }
 
-        if (state === 'ready') drawOverlay([['SNAKE-MAN', 40, '#FFD700'], ['PRESS AN ARROW KEY', 20, '#0f0'], ['5:00 ON THE CLOCK • MAP #' + mapSeed, 14, '#888'], ['GHOSTS READ x, ẋ, ẍ — DON\'T BE PREDICTABLE', 14, '#888'], ['N: NEW MAP', 14, '#666']]);
-        if (state === 'paused') drawOverlay([['PAUSED', 40, '#0f0'], ['SPACE TO RESUME', 18, '#888']]);
-        if (state === 'over') drawOverlay([[overReason, 44, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 24, '#FFD700'], ['ENTER / SPACE: SAME MAP • N: NEW MAP', 16, '#888']]);
+        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], ['PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], ['N: NEW MAP   C: CRT', 10, '#777']]);
+        if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], ['SPACE TO RESUME', 12, '#999']]);
+        if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'], ['ENTER/SPACE: SAME MAP', 10, '#999'], ['N: NEW MAP', 10, '#999']]);
+
+        present(now);
 
         timeEl.innerText = fmtTime(timeLeft);
         timeEl.className = timeLeft <= 30000 ? 'low' : '';

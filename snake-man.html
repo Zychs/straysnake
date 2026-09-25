@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SNAKE-MAN: TOROIDAL EDITION</title>
+    <style>
+        body {
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 12px 16px;
+            box-sizing: border-box;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+        }
+        canvas {
+            border: 4px solid #333;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+            background: #000;
+            width: min(600px, 92vw);
+            height: auto;
+            touch-action: none;
+        }
+        .stats {
+            display: flex;
+            gap: 40px;
+            font-size: 24px;
+            margin-bottom: 6px;
+        }
+        .kin {
+            font-size: 14px;
+            color: #6a6;
+            margin-bottom: 8px;
+            min-height: 1em;
+        }
+        .kin .v { color: #0ff; }
+        .kin .a { color: #f0f; }
+        .help {
+            margin-top: 12px;
+            color: #888;
+            text-align: center;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: auto auto auto;
+            gap: 2px 14px;
+            margin: 10px auto 0;
+            text-align: left;
+            font-size: 13px;
+            color: #aaa;
+            width: fit-content;
+        }
+        .legend b { font-weight: normal; }
+        .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px 5px 2px 2px; margin-right: 6px; }
+    </style>
+</head>
+<body>
+
+    <div class="stats">
+        <div>SCORE: <span id="score">0</span></div>
+        <div>HI: <span id="hi">0</span></div>
+        <div>LIVES: <span id="lives">3</span></div>
+    </div>
+    <div class="kin" id="kin"></div>
+
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+
+    <div class="help">
+        ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X TOGGLE DERIVATIVES<br>
+        THE WORLD WRAPS (TOROIDAL LOGIC) • EAT YELLOW DOTS TO GROW<br>
+        GHOSTS READ YOUR MOTION, AIM, LOCK, THEN LUNGE: <span style="color:#ddd">BREAK YOUR RHYTHM WHEN A RETICLE LOCKS</span><br>
+        A LUNGE THAT HITS YOUR BODY BOUNCES OFF (YOU LOSE THE TAIL) • <span style="color:#66f">BLUE</span> DAZED GHOSTS ARE EDIBLE
+        <div class="legend">
+            <span><span class="dot" style="background:#FF0000"></span>BLINKY</span><b>x</b><span>lunges where you <i>are</i></span>
+            <span><span class="dot" style="background:#FFB8FF"></span>PINKY</span><b>ẋ</b><span>leads your velocity</span>
+            <span><span class="dot" style="background:#00FFFF"></span>INKY</span><b>ẍ</b><span>follows your curve (accel)</span>
+            <span><span class="dot" style="background:#FFB800"></span>CLYDE</span><b>∫x</b><span>camps your loops (joins at 100)</span>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const hiEl = document.getElementById('hi');
+    const livesEl = document.getElementById('lives');
+    const kinEl = document.getElementById('kin');
+
+    // --- CONFIG ---
+    const GRID_SIZE = 20;
+    const TILE_COUNT = canvas.width / GRID_SIZE;
+    const W = canvas.width;
+
+    const PLAYER_STEP_MS = 100;   // 10 steps/sec for that retro feel
+    const HUNT_STEP_MS   = 320;   // ghosts roam ~3x slower than you
+    const HUNT_STEP_MIN  = 210;   // ...and speed up a little as you score
+    const AIM_MS         = 1000;  // wind-up: reticle tracks your predicted motion
+    const LOCK_MS        = 350;   // last part of wind-up: reticle freezes (your cue to juke)
+    const LUNGE_STEP_MS  = 80;    // the lunge itself is faster than you
+    const LUNGE_OVERSHOOT = 2;
+    const LUNGE_MAX      = 16;
+    const DAZE_MS        = 1600;
+    const DAZE_STEP_MS   = 480;
+    const ATTACK_RANGE   = 11;    // torus manhattan distance to start an attack
+    const MAX_ATTACKERS  = 2;
+    const INVULN_MS      = 2000;
+    const CLYDE_SCORE    = 100;
+
+    // --- TORUS HELPERS ---
+    const wrap = v => ((v % TILE_COUNT) + TILE_COUNT) % TILE_COUNT;
+    function wdelta(a, b) { // shortest signed step from a to b around the ring
+        let d = wrap(b - a);
+        if (d > TILE_COUNT / 2) d -= TILE_COUNT;
+        return d;
+    }
+    const tdist = (ax, ay, bx, by) => Math.abs(wdelta(ax, bx)) + Math.abs(wdelta(ay, by));
+    const DIRS = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+
+    // --- GAME STATE ---
+    let score = 0;
+    let lives = 3;
+    let hi = 0;
+    try { hi = +localStorage.getItem('snakeman-hi') || 0; } catch (e) {}
+    hiEl.innerText = hi;
+
+    let state = 'ready'; // ready | play | paused | over
+    let snake = [];
+    let direction = { x: 0, y: -1 };
+    let inputQueue = [];
+    let food = { x: 15, y: 15 };
+    let ghosts = [];
+    let invuln = 0;
+    let flash = 0;
+    let popups = [];
+    let showDerivs = true;
+    let playerAcc = 0;
+
+    // --- PLAYER KINEMATICS (the derivatives the ghosts read) ---
+    // Position is tracked unwrapped so velocity/acceleration don't glitch at the seams.
+    const kin = { ux: 0, uy: 0, v: { x: 0, y: -1 }, a: { x: 0, y: 0 }, trail: [] };
+    const V_GAIN = 0.4;  // EMA gain for velocity  (1st derivative)
+    const A_GAIN = 0.5;  // EMA gain for accel     (2nd derivative)
+
+    function kinReset(x, y, d) {
+        kin.ux = x; kin.uy = y;
+        kin.v = { x: d.x, y: d.y };
+        kin.a = { x: 0, y: 0 };
+        kin.trail = [];
+    }
+
+    function kinStep(d) {
+        kin.ux += d.x; kin.uy += d.y;
+        const nvx = kin.v.x + (d.x - kin.v.x) * V_GAIN;
+        const nvy = kin.v.y + (d.y - kin.v.y) * V_GAIN;
+        kin.a.x += ((nvx - kin.v.x) - kin.a.x) * A_GAIN;
+        kin.a.y += ((nvy - kin.v.y) - kin.a.y) * A_GAIN;
+        kin.v.x = nvx; kin.v.y = nvy;
+        kin.trail.push({ x: kin.ux, y: kin.uy });
+        if (kin.trail.length > 40) kin.trail.shift();
+    }
+
+    // Where will the head be T player-steps from now, reading `order` derivatives?
+    function predict(order, T) {
+        const hx = kin.ux, hy = kin.uy;
+        if (order === 0) return { x: hx, y: hy };
+        if (order === 1) return { x: hx + kin.v.x * T, y: hy + kin.v.y * T };
+        // order 2: integrate forward with decaying acceleration, speed capped at 1 tile/step
+        let px = hx, py = hy, vx = kin.v.x, vy = kin.v.y, ax = kin.a.x, ay = kin.a.y;
+        for (let i = 0; i < Math.ceil(T); i++) {
+            const f = Math.min(1, T - i);
+            vx += ax; vy += ay;
+            ax *= 0.85; ay *= 0.85;
+            const m = Math.hypot(vx, vy);
+            if (m > 1) { vx /= m; vy /= m; }
+            px += vx * f; py += vy * f;
+        }
+        return { x: px, y: py };
+    }
+
+    function trailCentroid() {
+        if (!kin.trail.length) return { x: kin.ux, y: kin.uy };
+        let sx = 0, sy = 0;
+        for (const p of kin.trail) { sx += p.x; sy += p.y; }
+        return { x: sx / kin.trail.length, y: sy / kin.trail.length };
+    }
+
+    const toCell = p => ({ x: wrap(Math.round(p.x)), y: wrap(Math.round(p.y)) });
+
+    // --- GHOSTS ---
+    const GHOST_DEFS = [
+        { name: 'BLINKY', color: '#FF0000', hunt: g => toCell(predict(0, 0)),          aimOrder: 0 },
+        { name: 'PINKY',  color: '#FFB8FF', hunt: g => toCell(predict(1, 4)),          aimOrder: 1 },
+        { name: 'INKY',   color: '#00FFFF', hunt: g => toCell(predict(2, 6)),          aimOrder: 2 },
+        { name: 'CLYDE',  color: '#FFB800', hunt: g => toCell(trailCentroid()),        aimOrder: 1, late: true },
+    ];
+
+    function makeGhost(def) {
+        return {
+            ...def, x: 0, y: 0, dir: { x: 1, y: 0 },
+            state: 'hunt', t: 0, acc: 0, cool: 0,
+            target: { x: 0, y: 0 }, locked: false, lungeLeft: 0,
+            trail: [], active: !def.late, fade: 1,
+        };
+    }
+
+    function occupied(x, y, except) {
+        return ghosts.some(o => o !== except && o.active && o.x === x && o.y === y);
+    }
+
+    function spawnFar(g) {
+        const h = snake[0];
+        for (let tries = 0; tries < 200; tries++) {
+            const x = Math.floor(Math.random() * TILE_COUNT);
+            const y = Math.floor(Math.random() * TILE_COUNT);
+            if (tdist(x, y, h.x, h.y) < 12) continue;
+            if (snake.some(s => s.x === x && s.y === y) || occupied(x, y, g)) continue;
+            g.x = x; g.y = y; break;
+        }
+        g.dir = DIRS[Math.floor(Math.random() * 4)];
+        g.state = 'hunt'; g.t = 0; g.acc = 0; g.locked = false; g.trail = [];
+        g.cool = 1500 + Math.random() * 2500;
+    }
+
+    function attackers() {
+        return ghosts.filter(g => g.active && (g.state === 'aim' || g.state === 'lunge')).length;
+    }
+
+    function huntStepMs() {
+        return Math.max(HUNT_STEP_MIN, HUNT_STEP_MS - score * 0.5);
+    }
+
+    // Solve for an intercept: where will the player be when my lunge can get there?
+    function interceptTarget(g, remainMs) {
+        const delay = remainMs / PLAYER_STEP_MS;          // player steps before I launch
+        const speed = PLAYER_STEP_MS / LUNGE_STEP_MS;     // my tiles per player step
+        let T = delay, cell = toCell(predict(g.aimOrder, T));
+        for (let i = 0; i < 5; i++) {
+            const d = tdist(g.x, g.y, cell.x, cell.y);
+            T = Math.min(20, delay + d / speed);
+            cell = toCell(predict(g.aimOrder, T));
+        }
+        return cell;
+    }
+
+    // Greedy step on the torus toward (or away from) a target.
+    function moveGhost(g, target, { allowReverse = false, flee = false } = {}) {
+        let best = [], bestScore = Infinity;
+        for (const d of DIRS) {
+            if (!allowReverse && d.x === -g.dir.x && d.y === -g.dir.y) continue;
+            const nx = wrap(g.x + d.x), ny = wrap(g.y + d.y);
+            if (occupied(nx, ny, g)) continue;
+            let s = tdist(nx, ny, target.x, target.y);
+            if (flee) s = -s;
+            if (s < bestScore) { bestScore = s; best = [d]; }
+            else if (s === bestScore) best.push(d);
+        }
+        if (!best.length) {
+            if (!allowReverse) return moveGhost(g, target, { allowReverse: true, flee });
+            return;
+        }
+        const d = best[Math.floor(Math.random() * best.length)];
+        g.trail.unshift({ x: g.x, y: g.y });
+        if (g.trail.length > 4) g.trail.pop();
+        g.dir = d;
+        g.x = wrap(g.x + d.x);
+        g.y = wrap(g.y + d.y);
+    }
+
+    function enterState(g, s) {
+        g.state = s; g.t = 0; g.acc = 0;
+        if (s === 'aim') { g.locked = false; g.target = interceptTarget(g, AIM_MS); }
+        if (s === 'lunge') { g.lungeLeft = Math.min(LUNGE_MAX, tdist(g.x, g.y, g.target.x, g.target.y) + LUNGE_OVERSHOOT); }
+        if (s === 'hunt') { g.trail = []; }
+    }
+
+    function lungeStep(g) {
+        if (g.x === g.target.x && g.y === g.target.y) {
+            // overshoot along current heading
+            g.trail.unshift({ x: g.x, y: g.y }); if (g.trail.length > 4) g.trail.pop();
+            g.x = wrap(g.x + g.dir.x); g.y = wrap(g.y + g.dir.y);
+        } else {
+            moveGhost(g, g.target, { allowReverse: true });
+        }
+        g.lungeLeft--;
+
+        if (checkContacts()) return;
+
+        // Lunging into the body: ghost bonks off, tail gets severed.
+        for (let i = 1; i < snake.length; i++) {
+            if (snake[i].x === g.x && snake[i].y === g.y) {
+                if (invuln <= 0 && snake.length > 2) {
+                    const lost = snake.length - Math.max(2, i);
+                    snake.length = Math.max(2, i);
+                    if (lost > 0) addPopup(g.x, g.y, 'SNIP -' + lost, '#f66');
+                }
+                enterState(g, 'daze');
+                return;
+            }
+        }
+        if (g.lungeLeft <= 0) enterState(g, 'daze');
+    }
+
+    function updateGhost(g, dt) {
+        if (!g.active) return;
+        g.t += dt;
+        g.cool -= dt;
+        if (g.fade < 1) g.fade = Math.min(1, g.fade + dt / 800);
+
+        switch (g.state) {
+            case 'hunt': {
+                g.target = g.hunt(g);
+                g.acc += dt;
+                const step = huntStepMs();
+                if (g.acc >= step) {
+                    g.acc -= step;
+                    moveGhost(g, g.target);
+                    if (checkContacts()) return;
+                }
+                const h = snake[0];
+                if (g.cool <= 0 && invuln <= 0 && tdist(g.x, g.y, h.x, h.y) <= ATTACK_RANGE && attackers() < MAX_ATTACKERS) {
+                    enterState(g, 'aim');
+                }
+                break;
+            }
+            case 'aim': {
+                if (g.t < AIM_MS - LOCK_MS) {
+                    g.target = interceptTarget(g, AIM_MS - g.t);
+                } else {
+                    g.locked = true;
+                }
+                if (g.t >= AIM_MS) enterState(g, 'lunge');
+                break;
+            }
+            case 'lunge': {
+                g.acc += dt;
+                while (g.acc >= LUNGE_STEP_MS && g.state === 'lunge' && state === 'play') {
+                    g.acc -= LUNGE_STEP_MS;
+                    lungeStep(g);
+                }
+                break;
+            }
+            case 'daze': {
+                g.acc += dt;
+                if (g.acc >= DAZE_STEP_MS) {
+                    g.acc -= DAZE_STEP_MS;
+                    moveGhost(g, snake[0], { flee: true });
+                    if (checkContacts()) return;
+                }
+                if (g.t >= DAZE_MS) {
+                    enterState(g, 'hunt');
+                    g.cool = 2200 + Math.random() * 2000;
+                }
+                break;
+            }
+        }
+    }
+
+    // --- INITIALIZATION ---
+    function init() {
+        score = 0; lives = 3;
+        scoreEl.innerText = score;
+        livesEl.innerText = lives;
+        resetSnake();
+        spawnFood();
+        ghosts = GHOST_DEFS.map(makeGhost);
+        ghosts.forEach(g => { if (g.active) spawnFar(g); });
+        invuln = 0; flash = 0; popups = [];
+        playerAcc = 0;
+    }
+
+    function resetSnake() {
+        snake = [{ x: 10, y: 10 }, { x: 10, y: 11 }, { x: 10, y: 12 }];
+        direction = { x: 0, y: -1 };
+        inputQueue = [];
+        kinReset(10, 10, direction);
+    }
+
+    function spawnFood() {
+        for (let tries = 0; tries < 500; tries++) {
+            const x = Math.floor(Math.random() * TILE_COUNT);
+            const y = Math.floor(Math.random() * TILE_COUNT);
+            if (snake.some(s => s.x === x && s.y === y) || occupied(x, y, null)) continue;
+            food = { x, y };
+            return;
+        }
+    }
+
+    function addPopup(x, y, text, color) {
+        popups.push({ x: x * GRID_SIZE + GRID_SIZE / 2, y: y * GRID_SIZE, text, color, t: 0 });
+    }
+
+    // --- INPUT ---
+    function queueDir(d) {
+        const last = inputQueue.length ? inputQueue[inputQueue.length - 1] : direction;
+        if (d.x === -last.x && d.y === -last.y) return;
+        if (d.x === last.x && d.y === last.y) return;
+        if (inputQueue.length < 2) inputQueue.push(d);
+    }
+
+    function pressDir(d) {
+        if (state === 'ready') state = 'play';
+        if (state === 'play') queueDir(d);
+    }
+
+    const KEYMAP = {
+        ArrowUp: DIRS[0], ArrowRight: DIRS[1], ArrowDown: DIRS[2], ArrowLeft: DIRS[3],
+        w: DIRS[0], d: DIRS[1], s: DIRS[2], a: DIRS[3],
+    };
+
+    window.addEventListener('keydown', e => {
+        const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+        if (KEYMAP[k]) { e.preventDefault(); pressDir(KEYMAP[k]); return; }
+        if (k === 'x') { showDerivs = !showDerivs; return; }
+        if (k === ' ' || k === 'p') {
+            e.preventDefault();
+            if (state === 'play') state = 'paused';
+            else if (state === 'paused') state = 'play';
+            else if (state === 'over') { init(); state = 'ready'; }
+            return;
+        }
+        if (k === 'Enter' && state === 'over') { init(); state = 'ready'; }
+    });
+
+    let touchStart = null;
+    canvas.addEventListener('touchstart', e => { const t = e.touches[0]; touchStart = { x: t.clientX, y: t.clientY }; e.preventDefault(); }, { passive: false });
+    canvas.addEventListener('touchend', e => {
+        if (!touchStart) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+        touchStart = null;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) {
+            if (state === 'over') { init(); state = 'ready'; }
+            else if (state === 'play') state = 'paused';
+            else if (state === 'paused') state = 'play';
+            return;
+        }
+        if (Math.abs(dx) > Math.abs(dy)) pressDir(dx > 0 ? DIRS[1] : DIRS[3]);
+        else pressDir(dy > 0 ? DIRS[2] : DIRS[0]);
+    });
+
+    // --- CORE LOGIC ---
+
+    function stepPlayer() {
+        if (inputQueue.length) direction = inputQueue.shift();
+
+        // --- THE TOROIDAL WRAP LOGIC ---
+        const head = { x: wrap(snake[0].x + direction.x), y: wrap(snake[0].y + direction.y) };
+        const eating = head.x === food.x && head.y === food.y;
+
+        // Self collision (the tail tip moves out of the way unless we're growing)
+        const n = eating ? snake.length : snake.length - 1;
+        for (let i = 0; i < n; i++) {
+            if (head.x === snake[i].x && head.y === snake[i].y) {
+                addPopup(head.x, head.y, 'OUCH', '#fa0');
+                resetSnake();
+                invuln = 1000;
+                return;
+            }
+        }
+
+        snake.unshift(head);
+        kinStep(direction);
+
+        if (eating) {
+            score += 10;
+            scoreEl.innerText = score;
+            spawnFood();
+            const clyde = ghosts.find(g => g.late && !g.active);
+            if (clyde && score >= CLYDE_SCORE) {
+                clyde.active = true; clyde.fade = 0;
+                spawnFar(clyde);
+                addPopup(clyde.x, clyde.y, 'CLYDE JOINS', clyde.color);
+            }
+        } else {
+            snake.pop();
+        }
+
+        checkContacts();
+    }
+
+    // Returns true if the round was interrupted (player hit).
+    function checkContacts() {
+        const h = snake[0];
+        for (const g of ghosts) {
+            if (!g.active || g.x !== h.x || g.y !== h.y) continue;
+            if (g.state === 'daze') { eatGhost(g); continue; }
+            if (invuln <= 0) { hitByGhost(); return true; }
+        }
+        return false;
+    }
+
+    function eatGhost(g) {
+        score += 50;
+        scoreEl.innerText = score;
+        addPopup(g.x, g.y, '+50', '#66f');
+        spawnFar(g);
+        g.cool = 3500;
+    }
+
+    function hitByGhost() {
+        lives--;
+        livesEl.innerText = lives;
+        flash = 1;
+        if (lives <= 0) {
+            state = 'over';
+            if (score > hi) {
+                hi = score; hiEl.innerText = hi;
+                try { localStorage.setItem('snakeman-hi', hi); } catch (e) {}
+            }
+            return;
+        }
+        resetSnake();
+        invuln = INVULN_MS;
+        ghosts.forEach(g => { if (g.active) spawnFar(g); });
+    }
+
+    function update(dt) {
+        playerAcc += dt;
+        while (playerAcc >= PLAYER_STEP_MS) {
+            playerAcc -= PLAYER_STEP_MS;
+            stepPlayer();
+            if (state !== 'play') return;
+        }
+        for (const g of ghosts) {
+            updateGhost(g, dt);
+            if (state !== 'play') return;
+        }
+        invuln = Math.max(0, invuln - dt);
+    }
+
+    // --- RENDERING ---
+
+    const cellCenter = (x, y) => ({ x: x * GRID_SIZE + GRID_SIZE / 2, y: y * GRID_SIZE + GRID_SIZE / 2 });
+
+    // Draw something 9 times so lines crossing a seam show up on both sides.
+    function drawWrapped(fn) {
+        for (const ox of [-W, 0, W]) for (const oy of [-W, 0, W]) {
+            ctx.save(); ctx.translate(ox, oy); fn(); ctx.restore();
+        }
+    }
+
+    function drawArrow(x, y, dx, dy, color) {
+        const len = Math.hypot(dx, dy);
+        if (len < 2) return;
+        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + dx, y + dy); ctx.stroke();
+        const ang = Math.atan2(dy, dx);
+        ctx.beginPath();
+        ctx.moveTo(x + dx, y + dy);
+        ctx.lineTo(x + dx - 7 * Math.cos(ang - 0.45), y + dy - 7 * Math.sin(ang - 0.45));
+        ctx.lineTo(x + dx - 7 * Math.cos(ang + 0.45), y + dy - 7 * Math.sin(ang + 0.45));
+        ctx.closePath(); ctx.fill();
+    }
+
+    function drawGhost(g, now) {
+        const s = GRID_SIZE;
+        let x = g.x * s, y = g.y * s;
+        if (g.state === 'aim') { // trembling wind-up
+            const amp = g.locked ? 1.5 : 0.8;
+            x += (Math.random() - 0.5) * 2 * amp; y += (Math.random() - 0.5) * 2 * amp;
+        }
+        let col = g.color;
+        if (g.state === 'daze') {
+            const blink = g.t > DAZE_MS - 500 && Math.floor(now / 100) % 2;
+            col = blink ? '#fff' : '#2233ff';
+        }
+
+        ctx.globalAlpha = g.fade;
+        // lunge afterimages
+        if (g.state === 'lunge') {
+            g.trail.forEach((p, i) => {
+                ctx.globalAlpha = g.fade * (0.35 - i * 0.08);
+                ctx.fillStyle = g.color;
+                ctx.fillRect(p.x * s + 3, p.y * s + 3, s - 6, s - 6);
+            });
+            ctx.globalAlpha = g.fade;
+        }
+
+        const cx = x + s / 2;
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.arc(cx, y + s * 0.46, s * 0.42, Math.PI, 0);
+        ctx.lineTo(x + s * 0.92, y + s * 0.95);
+        const bumps = 3, bw = (s * 0.84) / bumps;
+        const wob = Math.floor(now / 150) % 2 ? 0 : bw / 2;
+        for (let i = 0; i < bumps * 2; i++) {
+            const px = x + s * 0.92 - (i + 1) * bw / 2;
+            const py = (i + (wob ? 1 : 0)) % 2 === 0 ? y + s * 0.78 : y + s * 0.95;
+            ctx.lineTo(px, py);
+        }
+        ctx.lineTo(x + s * 0.08, y + s * 0.46);
+        ctx.closePath();
+        ctx.fill();
+
+        // eyes look where the ghost is heading (or aiming)
+        let lx = g.dir.x, ly = g.dir.y;
+        if (g.state === 'aim') {
+            const dx = wdelta(g.x, g.target.x), dy = wdelta(g.y, g.target.y);
+            const m = Math.hypot(dx, dy) || 1; lx = dx / m; ly = dy / m;
+        }
+        if (g.state === 'daze') {
+            ctx.fillStyle = '#fcc';
+            ctx.fillRect(cx - 5, y + 7, 3, 3); ctx.fillRect(cx + 2, y + 7, 3, 3);
+        } else {
+            ctx.fillStyle = 'white';
+            ctx.beginPath(); ctx.arc(cx - 4, y + 8, 3.2, 0, Math.PI * 2); ctx.arc(cx + 4, y + 8, 3.2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#1133ff';
+            ctx.beginPath(); ctx.arc(cx - 4 + lx * 1.6, y + 8 + ly * 1.6, 1.7, 0, Math.PI * 2); ctx.arc(cx + 4 + lx * 1.6, y + 8 + ly * 1.6, 1.7, 0, Math.PI * 2); ctx.fill();
+        }
+        if (g.state === 'aim' && g.locked) {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 14px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('!', cx, y - 3);
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    function drawAim(g, now) {
+        const from = cellCenter(g.x, g.y);
+        const dx = wdelta(g.x, g.target.x) * GRID_SIZE, dy = wdelta(g.y, g.target.y) * GRID_SIZE;
+        const progress = Math.min(1, g.t / AIM_MS);
+
+        ctx.save();
+        ctx.strokeStyle = g.color;
+        ctx.globalAlpha = g.locked ? 0.85 : 0.35 + 0.3 * progress;
+        ctx.lineWidth = g.locked ? 2 : 1;
+        ctx.setLineDash(g.locked ? [] : [4, 4]);
+        drawWrapped(() => {
+            ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(from.x + dx, from.y + dy); ctx.stroke();
+        });
+        ctx.setLineDash([]);
+
+        // reticle
+        const c = cellCenter(g.target.x, g.target.y);
+        const r = g.locked ? GRID_SIZE * 0.6 : GRID_SIZE * (1.4 - 0.8 * progress) + Math.sin(now / 60) * 1.5;
+        ctx.globalAlpha = g.locked ? 1 : 0.7;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x - r - 4, c.y); ctx.lineTo(c.x - r + 4, c.y);
+        ctx.moveTo(c.x + r - 4, c.y); ctx.lineTo(c.x + r + 4, c.y);
+        ctx.moveTo(c.x, c.y - r - 4); ctx.lineTo(c.x, c.y - r + 4);
+        ctx.moveTo(c.x, c.y + r - 4); ctx.lineTo(c.x, c.y + r + 4);
+        ctx.stroke();
+        if (g.locked) {
+            ctx.globalAlpha = 0.25 + 0.2 * Math.sin(now / 40);
+            ctx.fillStyle = g.color;
+            ctx.fillRect(g.target.x * GRID_SIZE, g.target.y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+        }
+        ctx.restore();
+    }
+
+    function drawDerivatives() {
+        const h = cellCenter(snake[0].x, snake[0].y);
+        // INKY's read of you: the 2nd-order predicted path
+        ctx.save();
+        ctx.fillStyle = '#f0f';
+        for (let T = 1; T <= 10; T++) {
+            const p = predict(2, T);
+            const px = (p.x - kin.ux) * GRID_SIZE, py = (p.y - kin.uy) * GRID_SIZE;
+            ctx.globalAlpha = 0.35 * (1 - T / 12);
+            drawWrapped(() => { ctx.beginPath(); ctx.arc(h.x + px, h.y + py, 2, 0, Math.PI * 2); ctx.fill(); });
+        }
+        ctx.globalAlpha = 0.8;
+        drawArrow(h.x, h.y, kin.v.x * GRID_SIZE * 3, kin.v.y * GRID_SIZE * 3, '#0ff');
+        drawArrow(h.x, h.y, kin.a.x * GRID_SIZE * 10, kin.a.y * GRID_SIZE * 10, '#f0f');
+        ctx.restore();
+    }
+
+    function drawSnake(now) {
+        const blink = invuln > 0 && Math.floor(now / 80) % 2;
+        ctx.globalAlpha = blink ? 0.3 : 1;
+
+        // body (tail fades out)
+        for (let i = snake.length - 1; i >= 1; i--) {
+            const part = snake[i];
+            const t = i / snake.length;
+            ctx.fillStyle = `hsl(${39 - t * 14}, 100%, ${50 - t * 18}%)`;
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.fillRect(part.x * GRID_SIZE, part.y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+            ctx.strokeRect(part.x * GRID_SIZE, part.y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+        }
+
+        // head: the "Pac" in Snake-Man, chomping in the direction of travel
+        const h = cellCenter(snake[0].x, snake[0].y);
+        const ang = Math.atan2(direction.y, direction.x);
+        const mouth = state === 'play' ? 0.08 + 0.3 * Math.abs(Math.sin(now / 70)) : 0.25;
+        ctx.fillStyle = '#FFD700';
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);
+        ctx.arc(h.x, h.y, GRID_SIZE / 2 + 1, ang + mouth, ang + Math.PI * 2 - mouth);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+
+    function drawOverlay(lines) {
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(0, 0, W, canvas.height);
+        ctx.textAlign = 'center';
+        lines.forEach(([text, size, color], i) => {
+            ctx.font = `bold ${size}px Courier New`;
+            ctx.fillStyle = color;
+            ctx.fillText(text, W / 2, canvas.height / 2 - 30 + i * 38);
+        });
+    }
+
+    function draw(now, dt) {
+        // Clear Canvas
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, W, canvas.height);
+
+        // Draw Grid (Subtle retro lines)
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < W; i += GRID_SIZE) {
+            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke();
+        }
+
+        // Food (pulsing pellet)
+        const fc = cellCenter(food.x, food.y);
+        ctx.fillStyle = '#FFFF00';
+        ctx.beginPath();
+        ctx.arc(fc.x, fc.y, GRID_SIZE / 2.5 + Math.sin(now / 150) * 1.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Attack telegraphs under everything else
+        ghosts.forEach(g => { if (g.active && g.state === 'aim') drawAim(g, now); });
+
+        if (showDerivs && state !== 'over') drawDerivatives();
+        drawSnake(now);
+        ghosts.forEach(g => { if (g.active) drawGhost(g, now); });
+
+        // Popups
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 14px Courier New';
+        popups = popups.filter(p => (p.t += dt) < 900);
+        popups.forEach(p => {
+            ctx.globalAlpha = 1 - p.t / 900;
+            ctx.fillStyle = p.color;
+            ctx.fillText(p.text, p.x, p.y - p.t / 30);
+        });
+        ctx.globalAlpha = 1;
+
+        // Hit flash
+        if (flash > 0) {
+            ctx.fillStyle = `rgba(255,0,0,${flash * 0.35})`;
+            ctx.fillRect(0, 0, W, canvas.height);
+            flash = Math.max(0, flash - dt / 400);
+        }
+
+        if (state === 'ready') drawOverlay([['SNAKE-MAN', 40, '#FFD700'], ['PRESS AN ARROW KEY', 20, '#0f0'], ['GHOSTS READ x, ẋ, ẍ — DON\'T BE PREDICTABLE', 14, '#888']]);
+        if (state === 'paused') drawOverlay([['PAUSED', 40, '#0f0'], ['SPACE TO RESUME', 18, '#888']]);
+        if (state === 'over') drawOverlay([['GAME OVER', 44, '#f33'], ['SCORE ' + score, 24, '#FFD700'], ['ENTER / SPACE TO PLAY AGAIN', 16, '#888']]);
+
+        const f = n => (n >= 0 ? ' ' : '−') + Math.abs(n).toFixed(2);
+        kinEl.innerHTML = `<span class="v">ẋ (${f(kin.v.x)},${f(kin.v.y)})</span> &nbsp; <span class="a">ẍ (${f(kin.a.x)},${f(kin.a.y)})</span>`;
+    }
+
+    let last = performance.now();
+    function loop(now) {
+        const dt = Math.min(100, now - last);
+        last = now;
+        if (state === 'play') update(dt);
+        draw(now, dt);
+        requestAnimationFrame(loop);
+    }
+
+    init();
+    requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>

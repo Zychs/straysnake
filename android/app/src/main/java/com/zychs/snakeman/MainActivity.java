@@ -9,7 +9,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 /**
- * A full-screen WebView around snake-man.html (copied in as assets/index.html at build time).
+ * A full-screen WebView around snake-man.html (copied in as assets/index.html at build time,
+ * with its script modules in assets/snake-man/).
  * The page switches to its touch layout (joystick + COAT / PAUSE buttons) when it sees ?app=1.
  */
 public class MainActivity extends Activity {

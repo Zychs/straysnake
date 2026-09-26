@@ -84,7 +84,7 @@
                 if (f && f.t < 3000 && Math.floor(now / 120) % 2) continue;
             }
             const spr = p.fruit ? gfx.fruitSprite(pf) : p.rainbow ? gfx.rainbowPelletSprite(hb, pf) : gfx.pelletSprite(pf);
-            ctx.drawImage(spr, snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2));
+            ctx.drawImage(spr, snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2) + SM.anim.breathe(p, now));
         }
     }
 
@@ -160,7 +160,7 @@
     function drawGhost(g, now) {
         if (!onScreen(g.x, g.y) || g.vis < 0.02) return;
         const s = GRID_SIZE, coat = SM.coat;
-        let x = sx(g.x) - s / 2, y = sy(g.y) - s / 2;
+        let x = sx(g.x) - s / 2, y = sy(g.y) - s / 2 + SM.anim.hover(g, now);
         if (g.state === 'aim') { // trembling wind-up
             const amp = g.locked ? 2 : 1;
             x += Math.round((Math.random() - 0.5) * 2 * amp) * P; y += Math.round((Math.random() - 0.5) * 2 * amp) * P;
@@ -169,6 +169,7 @@
         const frame = Math.floor(now * g.pace.hunt / 150 + g.pace.phase) % 2;
         let mode = 'normal';
         if (g.state === 'daze') mode = (g.t > g.dazeFor - 500 && Math.floor(now / 100) % 2) ? 'flash' : 'daze';
+        if (SM.anim.swellFlash(g)) mode = 'flash';
         let look = lookIndex(g.dir.x, g.dir.y);
         if (g.state === 'aim') look = lookIndex(wdelta(g.x, g.target.x), wdelta(g.y, g.target.y));
         const col = g.traitor ? coat.TRAITOR_COLOR : g.color;
@@ -182,7 +183,9 @@
             });
         }
         ctx.globalAlpha = g.vis * g.fade;
-        ctx.drawImage(sprite, snap(x), snap(y));
+        const k = SM.anim.swell(g);   // first sight: it looms, then shrinks back over 16 frames
+        if (k === 1) ctx.drawImage(sprite, snap(x), snap(y));
+        else { const w = snap(s * k); ctx.drawImage(sprite, snap(x + s / 2 - w / 2), snap(y + s - w), w, w); }
         ctx.globalAlpha = 1;
         if (g.state === 'aim' && g.locked && g.vis > 0.5) pixelText('!', x + s / 2, y - 3, 10, '#fff', col);
         // while you're disguised, ghosts that can see you show it: ? watching, ! nearly onto you
@@ -373,7 +376,10 @@
         dctx.globalCompositeOperation = 'source-over';
         dctx.globalAlpha = 1;
         dctx.imageSmoothingEnabled = false;
-        dctx.drawImage(scene, 0, 0);
+        const j = SM.anim.jolt();   // the sighting shock shudders the screen
+        dctx.fillStyle = '#000';
+        if (j.x || j.y) dctx.fillRect(0, 0, W, canvas.height);
+        dctx.drawImage(scene, j.x, j.y);
         if (!G.opts.crt) return;
 
         // bloom: downsample twice (cheap blur), add back on top

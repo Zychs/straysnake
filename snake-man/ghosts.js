@@ -198,6 +198,7 @@
         g.dir = DIRS[Math.floor(Math.random() * 4)];
         g.state = 'hunt'; g.t = 0; g.acc = 0; g.locked = false; g.trail = []; g.wp = null;
         g.fade = 0; g.farFor = 0;
+        g.sighted = false; g.swell = 0;   // a fresh appearance: it can shock you again (see anim.js)
         g.cool = (1500 + Math.random() * 2500) * coolMul(g);
     }
 

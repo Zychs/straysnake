@@ -11,7 +11,7 @@
         G.timeLeft = TIME_LIMIT_MS;
         G.overReason = '';
         G.ghosts = [];
-        G.invuln = 0; G.flash = 0; G.prism = 0; G.prismChain = 0;
+        G.invuln = 0; G.flash = 0; G.prism = 0; G.prismChain = 0; G.boost = 0;
         SM.fx.clear(); SM.coat.reset(); SM.dash.reset(); SM.heal.reset();
 
         // The seeded rng continues from map generation, so the opening layout is the same every run.
@@ -52,6 +52,7 @@
         if (!SM.ghosts.update(dt)) return;
         G.invuln = Math.max(0, G.invuln - dt);
         G.prism = Math.max(0, G.prism - dt);
+        G.boost = Math.max(0, G.boost - dt);
         SM.coat.update(dt);
         SM.dash.tick(dt);
         SM.heal.update(dt);

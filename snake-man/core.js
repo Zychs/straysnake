@@ -28,6 +28,10 @@ window.SM = window.SM || {};
     const RAINBOW_RESPAWN_MS = 25000;  // an eaten one comes back somewhere else after this
     const EVOLVE_MS          = 20000;  // the weakest ghost quietly molts this often
 
+    const FRUIT_EVERY = 50;            // a fruit appears every this many pellets eaten
+    const FRUIT_MS    = 15000;         // ...and rots away if you don't reach it in time
+    const BOOST_MS    = 10000;         // eating it doubles every score for this long
+
     // --- MATH ---
     const lerp = (a, b, t) => a + (b - a) * t;
     const clamp01 = t => Math.max(0, Math.min(1, t));
@@ -89,7 +93,7 @@ window.SM = window.SM || {};
         GRID_SIZE, W, VIEW, N, MIN_CORRIDOR, CHUNK, CN,
         TIME_LIMIT_MS, START_LIVES, MAX_LIVES,
         LUNGE_OVERSHOOT, DAZE_MS, DAZE_STEP_MS, INVULN_MS,
-        RAINBOW_COUNT, RAINBOW_RESPAWN_MS, EVOLVE_MS,
+        RAINBOW_COUNT, RAINBOW_RESPAWN_MS, EVOLVE_MS, FRUIT_EVERY, FRUIT_MS, BOOST_MS,
         lerp, clamp01, smooth,
         wrap, idx, wdelta, wdeltaF, tdist, chunkOf, cdist, ckey, ckeyDist, DIRS, dirIndex,
         mulberry32, store, on, emit,

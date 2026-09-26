@@ -79,7 +79,11 @@
         const hb = Math.floor(now / 80) % gfx.HUES;
         for (const p of SM.pellets.list) {
             if (!onScreen(p.x, p.y)) continue;
-            const spr = p.rainbow ? gfx.rainbowPelletSprite(hb, pf) : gfx.pelletSprite(pf);
+            if (p.fruit) {   // rotting: blink through the last 3 seconds
+                const f = SM.pellets.fruit;
+                if (f && f.t < 3000 && Math.floor(now / 120) % 2) continue;
+            }
+            const spr = p.fruit ? gfx.fruitSprite(pf) : p.rainbow ? gfx.rainbowPelletSprite(hb, pf) : gfx.pelletSprite(pf);
             ctx.drawImage(spr, snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2));
         }
     }
@@ -303,12 +307,14 @@
         ctx.beginPath(); ctx.rect(ox, oy, size, size); ctx.clip();
         ctx.fillStyle = '#ff0';
         const pellets = SM.pellets.list;
-        pellets.forEach(p => { if (!p.rainbow) ctx.fillRect(ox + p.x * s - 0.5, oy + p.y * s - 0.5, 2.5, 2.5); });
+        pellets.forEach(p => { if (!p.rainbow && !p.fruit) ctx.fillRect(ox + p.x * s - 0.5, oy + p.y * s - 0.5, 2.5, 2.5); });
         pellets.forEach(p => {
             if (!p.rainbow) return;
             ctx.fillStyle = gfx.rgbStr(gfx.hsl((now / 4) % 360));
             ctx.fillRect(ox + p.x * s - 1.5, oy + p.y * s - 1.5, 4.5, 4.5);
         });
+        const fr = SM.pellets.fruit;
+        if (fr && Math.floor(now / 250) % 2) { ctx.fillStyle = '#f22'; ctx.fillRect(ox + fr.x * s - 1.5, oy + fr.y * s - 1.5, 4.5, 4.5); }
         // with shadows on, the minimap only shows ghosts you can actually see
         G.ghosts.forEach(gh => {
             if (!gh.active || gh.vis < 0.5) return;
@@ -403,7 +409,8 @@
 
     function hud() {
         const coat = SM.coat, dash = SM.dash;
-        setText(el.score, G.score);
+        setText(el.score, G.score + (G.boost > 0 ? ' x2' : ''));
+        el.score.style.color = G.boost > 0 ? '#f55' : '';
         setText(el.hi, G.hi);
         setText(el.lives, G.lives);
         setText(el.time, fmtTime(G.timeLeft));

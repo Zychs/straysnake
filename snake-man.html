@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>SNAKE-MAN: TOROIDAL EDITION</title>
+    <script>
+        // Touch mode: a touch-only device, the Android app (?app=1 / its user agent), or ?pad=1.
+        (() => {
+            const q = new URLSearchParams(location.search);
+            const touchOnly = matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+            const app = q.has('app') || navigator.userAgent.includes('SnakeManApp');
+            if (touchOnly || app || q.has('pad')) document.documentElement.classList.add('touch');
+        })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -69,6 +78,41 @@
         }
         .legend b { font-weight: normal; }
         .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px 5px 2px 2px; margin-right: 6px; }
+        /* Touch pad: a joystick and two buttons, shown only in touch mode (html.touch: phones,
+           the Android app, or ?pad=1). */
+        .pad { display: none; }
+        html.touch body { justify-content: flex-start; padding-top: max(10px, env(safe-area-inset-top)); user-select: none; -webkit-user-select: none; }
+        html.touch .stats { font-size: 11px; gap: 4px 16px; margin-bottom: 8px; }
+        html.touch .kin, html.touch .help { display: none; }
+        html.touch .pad {
+            display: flex; align-items: center; justify-content: space-between;
+            width: min(600px, 92vw); margin-top: 18px; touch-action: none;
+        }
+        .stick {
+            position: relative; width: 150px; height: 150px; border-radius: 50%;
+            border: 3px solid #1c4a1c; box-shadow: inset 0 0 24px #000, 0 0 16px rgba(0,255,0,0.12);
+            background: radial-gradient(circle, #102810 0%, #070f07 70%); touch-action: none;
+        }
+        .stick::before, .stick::after {   /* faint 4-way cross: the snake only turns on the grid */
+            content: ''; position: absolute; left: 50%; top: 50%; background: #1c4a1c;
+        }
+        .stick::before { width: 70%; height: 3px; transform: translate(-50%, -50%); }
+        .stick::after { width: 3px; height: 70%; transform: translate(-50%, -50%); }
+        .knob {
+            position: absolute; left: 50%; top: 50%; width: 62px; height: 62px; margin: -31px 0 0 -31px;
+            border-radius: 50%; z-index: 1; pointer-events: none;
+            background: radial-gradient(circle at 35% 35%, #fff6a0, #ffd700 45%, #9a6a00);
+            box-shadow: 0 3px 0 #4a3000, 0 0 12px rgba(255,215,0,0.35);
+        }
+        .btns { display: flex; flex-direction: column; gap: 14px; }
+        .btns button {
+            width: 86px; height: 58px; border-radius: 14px; background: #0c0c14; touch-action: none;
+            font-family: 'Press Start 2P', 'Courier New', monospace; font-size: 11px; color: #0f0;
+            border: 3px solid #1c4a1c; box-shadow: 0 4px 0 #000;
+        }
+        .btns button:active, .btns button.on { transform: translateY(3px); box-shadow: 0 1px 0 #000; }
+        #btnCoat { color: #b89cff; border-color: #4a3a80; }
+        #btnCoat.cool { color: #555; border-color: #2a2a2a; }
         .rainbow {
             background: linear-gradient(90deg, #f33, #fa0, #ff3, #3f6, #3cf, #a6f, #f3c);
             -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -82,18 +126,32 @@
         <div>HI: <span id="hi">0</span></div>
         <div>LIVES: <span id="lives">3</span></div>
         <div>TIME: <span id="time">5:00</span></div>
+        <div>ZONE: <span id="zone">1/4</span></div>
+        <div>COAT: <span id="coat">READY</span></div>
     </div>
     <div class="kin" id="kin"></div>
 
     <canvas id="gameCanvas" width="600" height="600"></canvas>
 
+    <div class="pad">
+        <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
+        <div class="btns">
+            <button id="btnCoat">COAT</button>
+            <button id="btnPause">PAUSE</button>
+        </div>
+    </div>
+
     <div class="help">
         ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • O SHADOWS • C CRT • N NEW MAP<br>
+        <span style="color:#b89cff">ESC: TURNCOAT</span> — PASS AS A GHOST FOR 8s. RAM A GHOST TO TURN IT <span style="color:#3f6">TRAITOR</span> AGAINST ITS OWN.
+        WATCHING GHOSTS GET SUSPICIOUS (<span style="color:#fd4">?</span>) — THE ARMORED ONE SEES THROUGH YOU. GET <span style="color:#f33">BUSTED</span> AND THEY ALL STRIKE AT ONCE<br>
         THE WORLD WRAPS (TOROIDAL LOGIC) • <span style="color:#55f">BLUE WALLS</span> ARE SOLID AND BLOCK YOUR VIEW: CRASHING COSTS A LIFE<br>
         EAT YELLOW DOTS TO GROW • SCORE ALL YOU CAN BEFORE THE 5:00 CLOCK RUNS OUT<br>
         GHOSTS READ YOUR MOTION, AIM, LOCK, THEN LUNGE: <span style="color:#ddd">BREAK YOUR RHYTHM WHEN A RETICLE LOCKS</span><br>
         LUNGES BONK OFF WALLS • A LUNGE INTO YOUR BODY SNIPS THE TAIL • <span style="color:#66f">BLUE</span> DAZED GHOSTS ARE EDIBLE<br>
-        <span class="rainbow">RAINBOW PELLETS</span> TURN EVERY GHOST BLUE • EATEN GHOSTS COME BACK EVOLVED FROM THE BEST HUNTER
+        <span class="rainbow">RAINBOW PELLETS</span> TURN EVERY GHOST BLUE • EATEN GHOSTS COME BACK EVOLVED FROM THE BEST HUNTER<br>
+        EAT TO OPEN THE <span style="color:#f6f">FENCES</span>: THE WORLD OPENS IN 4 ZONES • GREY HIGHWAYS LOOP THE WORLD<br>
+        <span style="color:#5c5">GREEN PLAZAS</span> ARE OPEN GROUND • <span style="color:#d55">RED WARRENS</span> ARE TIGHT, PACKED WITH PELLETS, AND HIDE THE RAINBOWS
         <div class="legend">
             <span><span class="dot" style="background:#FF0000"></span>BLINKY</span><b>x</b><span>lunges where you <i>are</i></span>
             <span><span class="dot" style="background:#FFB8FF"></span>PINKY</span><b>ẋ</b><span>leads your velocity</span>
@@ -113,16 +171,18 @@
     const livesEl = document.getElementById('lives');
     const timeEl = document.getElementById('time');
     const kinEl = document.getElementById('kin');
+    const zoneEl = document.getElementById('zone');
+    const coatEl = document.getElementById('coat');
 
     // --- CONFIG ---
     const GRID_SIZE = 20;
     const W = canvas.width;
     const VIEW = W / GRID_SIZE;   // 30x30 tiles visible
     const TILE_COUNT = 90;        // the world is 90x90 tiles and wraps on both axes
+    const MIN_CORRIDOR = 3;       // narrowest gap between walls, in tiles (room to juke a lunge)
+    const CHUNK = 10;             // map design and ghost spawning both work in 10x10-tile chunks
 
     const TIME_LIMIT_MS  = 5 * 60 * 1000;
-    const FOOD_COUNT     = 45;
-    const GHOST_COPIES   = 2;     // two of each ghost roam the big map
 
     const LUNGE_OVERSHOOT = 2;
     const DAZE_MS        = 1600;
@@ -166,6 +226,11 @@
         return d;
     }
     const tdist = (ax, ay, bx, by) => Math.abs(wdelta(ax, bx)) + Math.abs(wdelta(ay, by));
+    const CN = N / CHUNK;                                        // chunks per side (9)
+    const chunkOf = v => Math.floor(wrap(v) / CHUNK);
+    const cdist = (a, b) => { const d = Math.abs(a - b) % CN; return Math.min(d, CN - d); };
+    const ckey = (cx, cy) => cx * CN + cy;                       // chunk id
+    const ckeyDist = (a, b) => Math.max(cdist(a / CN | 0, b / CN | 0), cdist(a % CN, b % CN));
     const DIRS = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
 
     function mulberry32(a) {
@@ -180,55 +245,290 @@
     // --- THE MAP (seeded, so the same world persists across runs and reloads) ---
     const walls = new Uint8Array(N * N);
     const pelletGrid = new Uint8Array(N * N);
-    const isWall = (x, y) => walls[idx(x, y)] === 1;
+    // walls[]: 0 open, 1 wall, 2 zone fence. Fences block movement but not sight.
+    const isWall = (x, y) => walls[idx(x, y)] !== 0;
+    const isOpaque = (x, y) => walls[idx(x, y)] === 1;
     let mapSeed = 0;
     let rng = Math.random;
     const minimap = document.createElement('canvas');
     const MM_SCALE = 1.6;
     minimap.width = minimap.height = Math.ceil(N * MM_SCALE);
 
+    // --- MAP DESIGN PROCEDURE ---
+    // The map is built in stages, each with a job, instead of scattering random pieces:
+    //   1. HIGHWAYS  – three wide roads each way. On the torus they close into loops, so there is
+    //                  always a way through, and their long sightlines are where lunges hurt most.
+    //   2. DISTRICTS – every 10x10 chunk gets a role:
+    //        PLAZA   open ground with one landmark: room to fight, eat, and get your bearings.
+    //                Spread out by farthest-point sampling so one is never far away.
+    //        WARREN  dense, short sightlines: ambush country. Rainbow pellets hide here.
+    //        PILLARS a regular lattice of 2x2 posts: cover that chops up sightlines.
+    //        YARDS   a loose scatter between the others.
+    //   3. DRESSING  – each district places only its own kind of piece, inside its own chunks,
+    //                  and every piece keeps MIN_CORRIDOR open tiles from every other.
+    //   4. VALIDATE  – flood-fill from a highway; any unreachable pocket is filled in.
+    // Content then follows the design: you start in a plaza, rainbows spawn in warrens, and
+    // ghosts prefer to spawn anywhere but plazas.
+    const D_PLAZA = 0, D_WARREN = 1, D_PILLARS = 2, D_YARDS = 3;
+    const district = new Uint8Array(CN * CN);
+    const road = new Uint8Array(N * N);
+    const districtAt = (x, y) => district[ckey(chunkOf(x), chunkOf(y))];
+    let plazas = [];
+    const PLAZA_COUNT = 6, WARREN_SEEDS = 4, PILLAR_SEEDS = 3;
+
     function generateMap(seed) {
         rng = mulberry32(seed);
-        walls.fill(0);
+        walls.fill(0); road.fill(0);
         const ri = (a, b) => a + Math.floor(rng() * (b - a + 1));
-        const shapes = [
-            () => { const l = ri(3, 9); return Array.from({ length: l }, (_, i) => [i, 0]); },                 // horizontal bar
-            () => { const l = ri(3, 9); return Array.from({ length: l }, (_, i) => [0, i]); },                 // vertical bar
-            () => { const a = ri(3, 6), b = ri(3, 6), sx = rng() < .5 ? 1 : -1, sy = rng() < .5 ? 1 : -1;      // L
-                    const c = []; for (let i = 0; i < a; i++) c.push([i * sx, 0]); for (let j = 1; j < b; j++) c.push([(a - 1) * sx, j * sy]); return c; },
-            () => { const w = ri(2, 4), h = ri(2, 3); const c = []; for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) c.push([i, j]); return c; }, // block
-            () => { const r = ri(1, 3); const c = [[0, 0]]; for (let i = 1; i <= r; i++) c.push([i, 0], [-i, 0], [0, i], [0, -i]); return c; },           // plus
-            () => { const w = ri(4, 8), h = ri(2, 4), flip = rng() < .5 ? 1 : -1;                                // U bracket
-                    const c = []; for (let i = 0; i < w; i++) c.push([i, 0]); for (let j = 1; j < h; j++) c.push([0, j * flip], [w - 1, j * flip]); return c; },
-        ];
-        // Pieces never touch each other (2-tile gap), so every corridor is at least 2 wide
-        // and nothing can seal off a pocket.
-        let placed = 0;
-        for (let attempt = 0; attempt < 4000 && placed < 170; attempt++) {
-            const ox = ri(0, N - 1), oy = ri(0, N - 1);
-            const cells = shapes[ri(0, shapes.length - 1)]().map(([dx, dy]) => [ox + dx, oy + dy]);
-            let ok = true;
-            for (const [cx, cy] of cells) {
-                for (let dx = -2; dx <= 2 && ok; dx++) for (let dy = -2; dy <= 2; dy++) {
-                    if (isWall(cx + dx, cy + dy)) { ok = false; break; }
-                }
-                if (!ok) break;
+        const gap = MIN_CORRIDOR;
+
+        // 1. HIGHWAYS
+        const HW = MIN_CORRIDOR + 1, off = ri(0, N / 3 - 1);
+        hwOff = off;
+        for (let k = 0; k < 3; k++) {
+            const at = off + k * N / 3;
+            for (let w = 0; w < HW; w++) for (let i = 0; i < N; i++) { road[idx(i, at + w)] = 1; road[idx(at + w, i)] = 1; }
+        }
+
+        // 2. DISTRICTS
+        const all = Array.from({ length: CN * CN }, (_, k) => k);
+        const nearest = (k, set) => set.reduce((m, s) => Math.min(m, ckeyDist(k, s)), Infinity);
+        plazas = [ri(0, CN * CN - 1)];
+        while (plazas.length < PLAZA_COUNT) {   // farthest-point sampling
+            let best = -1, bestD = -1;
+            for (const k of all) {
+                if (plazas.includes(k)) continue;
+                const d = nearest(k, plazas) + rng() * 0.5;
+                if (d > bestD) { bestD = d; best = k; }
             }
-            if (!ok) continue;
-            cells.forEach(([cx, cy]) => { walls[idx(cx, cy)] = 1; });
-            placed++;
+            plazas.push(best);
+        }
+        const rest = all.filter(k => !plazas.includes(k));
+        const pickSeeds = n => Array.from({ length: n }, () => rest[ri(0, rest.length - 1)]);
+        const warrenSeeds = pickSeeds(WARREN_SEEDS), pillarSeeds = pickSeeds(PILLAR_SEEDS);
+        for (const k of all) {
+            district[k] = plazas.includes(k) ? D_PLAZA
+                : nearest(k, warrenSeeds) <= 1 ? D_WARREN
+                : nearest(k, pillarSeeds) <= 1 ? D_PILLARS
+                : D_YARDS;
+        }
+
+        // 3. DRESSING
+        const fits = (cells, d) => cells.every(([x, y]) => {
+            if (road[idx(x, y)] || districtAt(x, y) !== d) return false;
+            for (let dx = -gap; dx <= gap; dx++) for (let dy = -gap; dy <= gap; dy++) if (isWall(x + dx, y + dy)) return false;
+            return true;
+        });
+        const place = (cells, d) => { if (!fits(cells, d)) return false; cells.forEach(([x, y]) => { walls[idx(x, y)] = 1; }); return true; };
+        const at = (ox, oy, cells) => cells.map(([dx, dy]) => [ox + dx, oy + dy]);
+
+        const bar   = () => { const l = ri(3, 8), v = rng() < .5; return Array.from({ length: l }, (_, i) => v ? [0, i] : [i, 0]); };
+        const ell   = () => { const a = ri(3, 6), b = ri(3, 6), sx = rng() < .5 ? 1 : -1, sy = rng() < .5 ? 1 : -1;
+                              const c = []; for (let i = 0; i < a; i++) c.push([i * sx, 0]); for (let j = 1; j < b; j++) c.push([(a - 1) * sx, j * sy]); return c; };
+        const block = () => { const w = ri(2, 3), h = ri(2, 3); const c = []; for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) c.push([i, j]); return c; };
+        const plus  = (r = ri(1, 2)) => { const c = [[0, 0]]; for (let i = 1; i <= r; i++) c.push([i, 0], [-i, 0], [0, i], [0, -i]); return c; };
+        const cup   = () => { const w = ri(gap + 2, gap + 4), h = ri(2, 3), flip = rng() < .5 ? 1 : -1;   // U: its inside is a corridor too
+                              const c = []; for (let i = 0; i < w; i++) c.push([i, 0]); for (let j = 1; j < h; j++) c.push([0, j * flip], [w - 1, j * flip]); return c; };
+        // Landmark: a square ring with a MIN_CORRIDOR-wide gate in the middle of each side.
+        const ring  = () => { const arm = 2, L = arm * 2 + gap, c = [];
+                              for (let i = 0; i < L; i++) if (i < arm || i >= L - arm) c.push([i, 0], [i, L - 1], [0, i], [L - 1, i]);
+                              return [...new Set(c.map(String))].map(s => s.split(',').map(Number)); };
+
+        const chunksOf = d => all.filter(k => district[k] === d);
+        const origin = k => [(k / CN | 0) * CHUNK, (k % CN) * CHUNK];
+
+        // warrens: a braided maze on one global lattice. Walls are 1 wide between posts every
+        // MIN_CORRIDOR+1 tiles, so every hall is exactly MIN_CORRIDOR wide. A randomized DFS
+        // carves a spanning tree (every cell reachable, nothing boxed in), then about half the
+        // dead ends are knocked through so there are loops to escape along. Edges facing other
+        // districts are walled half the time, so warrens have several mouths.
+        // The lattice stops short of the torus seam so the last hall isn't pinched.
+        const ms = gap + 1, mx = ri(0, ms - 1), my = ri(0, ms - 1), cellsPer = Math.floor(N / ms) - 1;
+        const inWarren = (x, y) => !road[idx(x, y)] && districtAt(x, y) === D_WARREN;
+        // a cell counts if its open interior is warren; its walls get clipped where they'd hit a
+        // highway, so the maze runs right up to the roads that slice through every warren
+        const valid = (i, j) => {
+            if (i < 0 || j < 0 || i >= cellsPer || j >= cellsPer) return false;
+            const x0 = mx + i * ms, y0 = my + j * ms;
+            for (let y = y0 + 1; y < y0 + ms; y++) for (let x = x0 + 1; x < x0 + ms; x++) if (!inWarren(x, y)) return false;
+            return true;
+        };
+        const edge = new Map();   // 'h,i,j' = top wall of cell (i,j); 'v,i,j' = left wall of cell (i,j)
+        const sides = (i, j) => [                       // [key, neighbour i, neighbour j]
+            ['h,' + i + ',' + j, i, j - 1], ['h,' + i + ',' + (j + 1), i, j + 1],
+            ['v,' + i + ',' + j, i - 1, j], ['v,' + (i + 1) + ',' + j, i + 1, j]];
+        const cellsList = [];
+        for (let j = 0; j < cellsPer; j++) for (let i = 0; i < cellsPer; i++) if (valid(i, j)) cellsList.push([i, j]);
+        for (const [i, j] of cellsList) for (const [key, ni, nj] of sides(i, j)) {
+            if (!edge.has(key)) edge.set(key, valid(ni, nj) ? true : rng() < 0.5);
+        }
+        const seenCell = new Set();
+        for (const [si, sj] of cellsList) {                 // carve (one tree per warren blob)
+            if (seenCell.has(si + ',' + sj)) continue;
+            const stack = [[si, sj]]; seenCell.add(si + ',' + sj);
+            while (stack.length) {
+                const [i, j] = stack[stack.length - 1];
+                const next = sides(i, j).filter(([, ni, nj]) => valid(ni, nj) && !seenCell.has(ni + ',' + nj));
+                if (!next.length) { stack.pop(); continue; }
+                const [key, ni, nj] = next[ri(0, next.length - 1)];
+                edge.set(key, false);
+                seenCell.add(ni + ',' + nj);
+                stack.push([ni, nj]);
+            }
+        }
+        for (const [i, j] of cellsList) {                   // braid: open ~half the dead ends
+            const closed = sides(i, j).filter(([key]) => edge.get(key));
+            if (closed.length >= 3 && rng() < 0.5) edge.set(closed[ri(0, closed.length - 1)][0], false);
+        }
+        for (const [key, on] of edge) {
+            if (!on) continue;
+            const [o, i, j] = key.split(','), x = mx + +i * ms, y = my + +j * ms;
+            for (let k = 0; k <= ms; k++) {
+                const wx = o === 'h' ? x + k : x, wy = o === 'h' ? y : y + k;
+                if (inWarren(wx, wy)) walls[idx(wx, wy)] = 1;
+            }
+        }
+
+        // plazas: one landmark each, as close to the chunk centre as the highways allow
+        for (const k of chunksOf(D_PLAZA)) {
+            const [x0, y0] = origin(k);
+            // big landmark first; if a highway cuts the chunk, fall back to smaller ones
+            const big = rng() < 0.5 ? [ring, () => plus(3)] : [() => plus(3), ring];
+            const pillbox = () => { const c = []; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) c.push([i, j]); return c; };
+            const options = [...big, () => plus(2), pillbox, () => plus(1)];
+            done: for (const make of options) for (let t = 0; t < 16; t++) {
+                const shape = make();
+                const lo = Math.min(...shape.map(([dx]) => dx)), size = 1 + Math.max(...shape.map(([dx]) => dx)) - lo; // square shapes
+                const slack = Math.max(0, CHUNK - size);
+                const ox = x0 - lo + ri(0, slack), oy = y0 - lo + ri(0, slack);
+                if (place(at(ox, oy, shape), D_PLAZA)) break done;
+            }
+        }
+        // pillars: one global lattice (so neighbouring pillar chunks line up), ~30% posts missing.
+        // Alternate rows are staggered like bricks: long horizontal lanes, broken vertical ones.
+        const step = gap + 2, px = ri(0, step - 1), py = ri(0, step - 1);
+        const mod = (v, m) => ((v % m) + m) % m;
+        for (const k of chunksOf(D_PILLARS)) {
+            const [x0, y0] = origin(k);
+            for (let y = y0; y < y0 + CHUNK; y++) for (let x = x0; x < x0 + CHUNK; x++) {
+                if (mod(y - py, step)) continue;
+                const stagger = Math.floor(mod(y - py, N) / step) % 2 ? Math.ceil(step / 2) : 0;
+                if (mod(x - px - stagger, step) || rng() < 0.3) continue;
+                place(at(x, y, [[0, 0], [1, 0], [0, 1], [1, 1]]), D_PILLARS);
+            }
+        }
+        // yards: a loose scatter of pieces
+        const dress = (d, palette, want) => {
+            for (const k of chunksOf(d)) {
+                const [x0, y0] = origin(k);
+                for (let n = 0, t = 0; n < want && t < 60; t++) {
+                    const shape = palette[ri(0, palette.length - 1)]();
+                    if (place(at(x0 + ri(0, CHUNK - 1), y0 + ri(0, CHUNK - 1), shape), d)) n++;
+                }
+            }
+        };
+        dress(D_YARDS, [bar, plus, block, ell, cup], 3);
+
+        // 4. VALIDATE: flood-fill the open ground from a highway; seal anything unreachable.
+        const seen = new Uint8Array(N * N), q = [idx(off, off)];
+        seen[q[0]] = 1;
+        while (q.length) {
+            const c = q.pop(), cx = c % N, cy = (c / N) | 0;
+            for (const d of DIRS) {
+                const ni = idx(cx + d.x, cy + d.y);
+                if (!seen[ni] && !walls[ni]) { seen[ni] = 1; q.push(ni); }
+            }
+        }
+        let sealed = 0;
+        for (let i = 0; i < N * N; i++) if (!walls[i] && !seen[i]) { walls[i] = 1; sealed++; }
+        mapStats = { walls: walls.reduce((s, v) => s + v, 0), sealed };
+
+        renderMinimapBase();
+    }
+    let mapStats = {};
+    let hwOff = 0;   // where the first highway starts (blocks between highways are N/3 = 30 apart)
+
+    // District colours: floor studs and minimap tint, so the layout reads at a glance.
+    const DISTRICT_STUD = ['#1f3a22', '#40201f', '#1f2444', '#1c1c1c'];
+    const DISTRICT_MM   = ['rgba(40,160,70,0.22)', 'rgba(200,60,60,0.22)', 'rgba(70,90,220,0.20)', 'rgba(0,0,0,0)'];
+    const ROAD_STUD = '#3a3a3a';
+
+    // Pellets pile up where it's dangerous: plaza, warren, pillars, yards (highways get ROAD).
+    const PELLET_WEIGHT = [0.5, 3, 2, 1], PELLET_WEIGHT_ROAD = 0.7, PELLET_WEIGHT_MAX = 3;
+    const pelletWeight = (x, y) => road[idx(x, y)] ? PELLET_WEIGHT_ROAD : PELLET_WEIGHT[districtAt(x, y)];
+
+    // --- STAGED DOMAIN ---
+    // You start fenced into the highway block around your starting plaza. Eating pellets opens the
+    // world in stages, a block at a time along the highway grid, until the fences are gone. The
+    // domain always runs from one highway to the far side of another, so a fence only ever sits
+    // just outside a wide, wall-free road and can't pinch a corridor or seal a pocket.
+    const BLOCK = N / 3;
+    const STAGES = [                // domain size in blocks, pellets eaten to get there, pellet target
+        { bw: 1, bh: 1, at: 0,  food: 25 },
+        { bw: 2, bh: 1, at: 15, food: 35 },
+        { bw: 2, bh: 2, at: 40, food: 45 },
+        { bw: 3, bh: 3, at: 75, food: 60 },   // the whole torus: no fences
+    ];
+    let stage = 0, eaten = 0;
+    const dom = { bx: 0, by: 0, sx: 1, sy: 1 };   // start block and which way it grows
+    const inRange = (v, s, l) => wrap(v - s) < l;
+    function domainRect() {
+        const st = STAGES[stage];
+        if (st.bw >= 3) return null;
+        const x0 = hwOff + BLOCK * (dom.sx > 0 ? dom.bx : dom.bx - (st.bw - 1));
+        const y0 = hwOff + BLOCK * (dom.sy > 0 ? dom.by : dom.by - (st.bh - 1));
+        // from the start of one highway to the end of the highway past the last block
+        return { x: x0, y: y0, w: st.bw * BLOCK + MIN_CORRIDOR + 1, h: st.bh * BLOCK + MIN_CORRIDOR + 1 };
+    }
+    let domCache = null;   // domainRect() for the current stage (null = whole world)
+    function inDomain(x, y) {
+        const r = domCache;
+        return !r || (inRange(x, r.x, r.w) && inRange(y, r.y, r.h));
+    }
+    function buildFence() {
+        for (let i = 0; i < N * N; i++) if (walls[i] === 2) walls[i] = 0;
+        const r = domCache = domainRect();
+        if (r) {
+            const post = (x, y) => { const i = idx(x, y); if (walls[i] === 0) walls[i] = 2; };
+            for (let k = -1; k <= r.w; k++) { post(r.x + k, r.y - 1); post(r.x + k, r.y + r.h); }
+            for (let k = -1; k <= r.h; k++) { post(r.x - 1, r.y + k); post(r.x + r.w, r.y + k); }
         }
         renderMinimapBase();
     }
+    function setupDomain(sx, sy, rand) {
+        stage = 0; eaten = 0;
+        dom.bx = Math.floor(wrap(sx - hwOff) / BLOCK);
+        dom.by = Math.floor(wrap(sy - hwOff) / BLOCK);
+        dom.sx = rand() < 0.5 ? 1 : -1;
+        dom.sy = rand() < 0.5 ? 1 : -1;
+        buildFence();
+    }
+    function checkStage(at) {
+        let grew = false;
+        while (stage < STAGES.length - 1 && eaten >= STAGES[stage + 1].at) { stage++; grew = true; }
+        if (!grew) return;
+        buildFence();
+        const yellow = pellets.filter(p => !p.rainbow).length;
+        for (let i = yellow; i < STAGES[stage].food; i++) spawnPellet(Math.random, 12);
+        addPopup(at.x, at.y - 1, stage === STAGES.length - 1 ? 'THE FENCES FALL' : 'ZONE ' + (stage + 1), '#f6f');
+    }
 
     function renderMinimapBase() {
-        const m = minimap.getContext('2d');
+        const m = minimap.getContext('2d'), s = MM_SCALE;
         m.clearRect(0, 0, minimap.width, minimap.height);
         m.fillStyle = 'rgba(0,0,0,0.75)';
         m.fillRect(0, 0, minimap.width, minimap.height);
-        m.fillStyle = '#2a2aff';
+        for (let k = 0; k < CN * CN; k++) {
+            m.fillStyle = DISTRICT_MM[district[k]];
+            m.fillRect((k / CN | 0) * CHUNK * s, (k % CN) * CHUNK * s, CHUNK * s, CHUNK * s);
+        }
+        m.fillStyle = 'rgba(255,255,255,0.07)';
+        for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (road[idx(x, y)]) m.fillRect(x * s, y * s, Math.ceil(s), Math.ceil(s));
         for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-            if (walls[idx(x, y)]) m.fillRect(x * MM_SCALE, y * MM_SCALE, Math.ceil(MM_SCALE), Math.ceil(MM_SCALE));
+            const w = walls[idx(x, y)];
+            if (!w) continue;
+            m.fillStyle = w === 2 ? '#f4f' : '#2a2aff';
+            m.fillRect(x * s, y * s, Math.ceil(s), Math.ceil(s));
         }
     }
 
@@ -357,19 +657,16 @@
         { name: 'CLYDE',  color: '#FFB800', hunt: g => toCell(trailCentroid()), aimOrder: 1, late: true },
     ];
 
-    // Ghosts don't all start on the board: the rest slip in unannounced as the heat rises.
-    const JOIN_AT = { BLINKY: [0, 0.10], PINKY: [0, 0.18], INKY: [0, 0.26], CLYDE: [0.32, 0.45] };
-
-    function makeGhost(def, copy) {
+    // immune: the one armored ghost. Rainbows don't turn it blue and it can never be eaten.
+    function makeGhost(def, immune = false) {
         const g = {
             ...def, x: 0, y: 0, dir: { x: 1, y: 0 },
             state: 'hunt', t: 0, acc: 0, cool: 0,
             target: { x: 0, y: 0 }, wp: null, locked: false, lungeLeft: 0,
-            trail: [], active: false, fade: 1, vis: 0,
-            joinAt: JOIN_AT[def.name][copy],
-            // The first BLINKY is armored: rainbows don't turn it blue and it can never be eaten.
-            immune: def.name === 'BLINKY' && copy === 0,
-            genes: {}, gen: 1, fit: 0, born: 0,
+            trail: [], active: true, fade: 0, vis: 0, farFor: 0,
+            traitor: 0, victim: null,   // ms left fighting for the player (see TURNCOAT)
+            immune,
+            genes: {}, gen: 1, fit: 0, born: playedMs(),
         };
         for (const k of GENES) g.genes[k] = 0.15 + Math.random() * 0.2;
         return g;
@@ -377,17 +674,30 @@
 
     // --- PROCEDURAL EVOLUTION ---
     // Each ghost carries five genes in 0..1 (0 = timid, 1 = deadly). A ghost that lands hits
-    // earns fitness; one that gets eaten comes back as the mutated child of a fit survivor.
+    // earns fitness. New ghosts are bred from fit survivors and from the gene pool that
+    // despawned ghosts leave behind; an eaten ghost's genes are simply lost.
     const GENES = ['speed', 'wind', 'reach', 'sense', 'nerve'];
     const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 0.8;
     const geneCap = () => 0.4 + 0.6 * heatE();   // evolution can't outrun the difficulty dial
+    const GENE_POOL_MAX = 16;
+    let genePool = [];                             // { genes, gen, worth } of despawned ghosts
+
+    function archive(g) {
+        genePool.push({ genes: { ...g.genes }, gen: g.gen, worth: fitRate(g) });
+        if (genePool.length > GENE_POOL_MAX) {
+            genePool.sort((a, b) => b.worth - a.worth);
+            genePool.length = GENE_POOL_MAX;
+        }
+    }
 
     function breed(child) {
-        const pool = ghosts.filter(o => o.active && o !== child);
+        const pool = ghosts.filter(o => o.active && o !== child)
+            .map(o => ({ genes: o.genes, gen: o.gen, worth: fitRate(o) }))
+            .concat(genePool);
         const pick = () => pool[Math.floor(Math.random() * pool.length)];
         let parent = child, mate = child;
         if (pool.length) {
-            const worth = o => fitRate(o) + o.gen * 0.1;
+            const worth = o => o.worth + o.gen * 0.1;
             parent = [pick(), pick(), pick()].reduce((a, b) => worth(b) > worth(a) ? b : a);   // tournament of three
             mate = pick();
         }
@@ -424,22 +734,187 @@
         return ghosts.some(o => o !== except && o.active && o.x === x && o.y === y);
     }
 
-    function spawnFar(g) {
+    // --- CHUNK DIRECTOR (Minecraft-style mob spawning) ---
+    // The world is 9x9 chunks of 10x10 tiles. Ghosts only exist near the player: they spawn in
+    // the ring of chunks just outside the 30x30 view (emptiest chunks first, so they surround
+    // you instead of bunching up), and despawn once they're left far behind and unseen. How
+    // many exist at once follows the silent heat dial.
+    const SPAWN_RING   = 2;       // chunk distance new ghosts appear at
+    const DESPAWN_RING = 3;       // unseen, idle ghosts this far out get culled...
+    const DESPAWN_MS   = 2500;    // ...after lingering there this long
+    const CHUNK_CAP    = 2;       // at most this many ghosts share a chunk when spawning
+    function chunkDist(x, y) {
         const h = snake[0];
-        for (let tries = 0; tries < 400; tries++) {
-            const x = Math.floor(Math.random() * N);
-            const y = Math.floor(Math.random() * N);
-            if (isWall(x, y) || tdist(x, y, h.x, h.y) < 20) continue;
-            if (snake.some(s => s.x === x && s.y === y) || occupied(x, y, g)) continue;
-            g.x = x; g.y = y; break;
-        }
+        return Math.max(cdist(chunkOf(x), chunkOf(h.x)), cdist(chunkOf(y), chunkOf(h.y)));
+    }
+    const ghostCap     = () => Math.round(lerp(5, 14, heatE()));
+    const spawnEveryMs = () => lerp(1500, 600, heatE());
+    let spawnAcc = 0;
+
+    function resetGhost(g) {
         g.dir = DIRS[Math.floor(Math.random() * 4)];
         g.state = 'hunt'; g.t = 0; g.acc = 0; g.locked = false; g.trail = []; g.wp = null;
+        g.fade = 0; g.farFor = 0;
         g.cool = (1500 + Math.random() * 2500) * coolMul(g);
     }
 
+    // Put g on an open tile in the emptiest chunk of the spawn ring, out of the player's sight.
+    function placeInRing(g) {
+        const h = snake[0], hx = chunkOf(h.x), hy = chunkOf(h.y);
+        const counts = new Map();
+        ghosts.forEach(o => {
+            if (o === g || !o.active) return;
+            const k = chunkOf(o.x) * CN + chunkOf(o.y);
+            counts.set(k, (counts.get(k) || 0) + 1);
+        });
+        const ring = [];
+        for (let dy = -SPAWN_RING; dy <= SPAWN_RING; dy++) for (let dx = -SPAWN_RING; dx <= SPAWN_RING; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== SPAWN_RING) continue;
+            const cx = (hx + dx + CN) % CN, cy = (hy + dy + CN) % CN;
+            const n = counts.get(cx * CN + cy) || 0;
+            // ghosts come out of the warrens and pillar fields, rarely the open plazas
+            const pref = [1.2, -0.3, 0, 0.2][district[ckey(cx, cy)]];
+            if (n < CHUNK_CAP) ring.push({ cx, cy, n: n + pref + Math.random() * 0.9 });
+        }
+        ring.sort((a, b) => a.n - b.n);
+        const ok = (x, y, minD) => !isWall(x, y) && inDomain(x, y) && !occupied(x, y, g)
+            && tdist(x, y, h.x, h.y) >= minD && !(onScreen(x, y) && lineOfSight(x, y));
+        const put = (x, y) => { g.x = wrap(x); g.y = wrap(y); resetGhost(g); return true; };
+        for (const c of ring) {
+            for (let tries = 0; tries < 30; tries++) {
+                const x = c.cx * CHUNK + Math.floor(Math.random() * CHUNK);
+                const y = c.cy * CHUNK + Math.floor(Math.random() * CHUNK);
+                if (ok(x, y, 16)) return put(x, y);
+            }
+        }
+        // The ring can lie outside a small early domain: fall back to anywhere in the domain
+        // that's out of sight.
+        const r = domainRect() || { x: 0, y: 0, w: N, h: N };
+        for (let tries = 0; tries < 200; tries++) {
+            const x = r.x + Math.floor(Math.random() * r.w), y = r.y + Math.floor(Math.random() * r.h);
+            if (ok(x, y, 12)) return put(x, y);
+        }
+        return false;
+    }
+
+    // Pick the least-represented ghost type (CLYDE only once the heat is up).
+    function pickType() {
+        const types = GHOST_DEFS.filter(d => !d.late || heat() >= 0.32);
+        const count = d => ghosts.filter(g => g.active && g.name === d.name).length + Math.random() * 0.9;
+        return types.reduce((a, b) => count(b) < count(a) ? b : a);
+    }
+
+    function spawnGhost(immune = false) {
+        const g = makeGhost(immune ? GHOST_DEFS[0] : pickType(), immune);
+        if (!immune) breed(g);
+        if (!placeInRing(g)) return false;
+        ghosts.push(g);
+        return true;
+    }
+
+    function directGhosts(dt) {
+        ghosts = ghosts.filter(g => g.active);   // drop eaten ghosts
+        for (const g of ghosts) {
+            const idle = g.state === 'hunt' || g.state === 'daze';
+            g.farFor = idle && g.vis < 0.05 && chunkDist(g.x, g.y) >= DESPAWN_RING ? g.farFor + dt : 0;
+            if (g.farFor < DESPAWN_MS) continue;
+            if (g.immune) { placeInRing(g); continue; }   // the armored ghost never leaves: it follows you
+            archive(g);
+            g.active = false;
+        }
+        ghosts = ghosts.filter(g => g.active);
+        spawnAcc += dt;
+        if (ghosts.length < ghostCap() && spawnAcc >= spawnEveryMs()) {
+            spawnAcc = 0;
+            spawnGhost();
+        }
+    }
+
     function attackers() {
-        return ghosts.filter(g => g.active && (g.state === 'aim' || g.state === 'lunge')).length;
+        return ghosts.filter(g => g.active && !g.traitor && (g.state === 'aim' || g.state === 'lunge')).length;
+    }
+
+    // --- TURNCOAT (Esc) ---
+    // A high-stakes ruse: disguise yourself as a ghost. Ghosts stop hunting you (a lunge already
+    // in flight still lands). Run your head into a ghost and it turns traitor for a few seconds,
+    // lunging at its own kind; anyone it hits is dazed and edible. But every ghost that can see
+    // you grows suspicious, eating or sabotaging in view makes it spike, the armored ghost watches
+    // three times as hard and sees straight through you if you touch it. Fill the meter and
+    // you're BUSTED: every ghost nearby winds up at once, fast.
+    const COAT_MS = 8000, COAT_COOL_MS = 10000, BUSTED_COOL_MS = 18000, TRAITOR_MS = 7000;
+    const WATCH_RANGE = 12, BUST_RANGE = 14;
+    const COAT_COLOR = '#b89cff', TRAITOR_COLOR = '#33ff66';
+    let disguised = false, coatT = 0, coatCool = 0, suspicion = 0;
+
+    function toggleCoat() {
+        if (state !== 'play') return;
+        if (disguised) { dropCoat('COVER DROPPED'); return; }
+        if (coatCool > 0) return;
+        disguised = true; coatT = COAT_MS; suspicion = 0;
+        addPopup(snake[0].x, snake[0].y - 1, 'TURNCOAT', COAT_COLOR);
+    }
+    function dropCoat(msg) {
+        disguised = false; coatCool = COAT_COOL_MS; suspicion = 0;
+        if (msg) addPopup(snake[0].x, snake[0].y - 1, msg, COAT_COLOR);
+    }
+    const watching = g => g.active && !g.traitor && g.state !== 'daze'
+        && tdist(g.x, g.y, snake[0].x, snake[0].y) <= WATCH_RANGE && lineOfSight(g.x, g.y);
+    const witnessWeight = () => ghosts.reduce((s, g) => s + (watching(g) ? (g.immune ? 3 : 1) : 0), 0);
+    function suspect(amount) {
+        if (!disguised) return;
+        suspicion += amount;
+        if (suspicion >= 1) bust();
+    }
+    function bust() {
+        const h = snake[0];
+        disguised = false; suspicion = 0; coatCool = BUSTED_COOL_MS;
+        addPopup(h.x, h.y - 1, 'BUSTED!', '#f33');
+        flash = 0.6;
+        for (const g of ghosts) {   // the ambush: everyone close winds up at once, and faster
+            if (!g.active || g.traitor || g.state === 'daze' || tdist(g.x, g.y, h.x, h.y) > BUST_RANGE) continue;
+            enterState(g, 'aim');
+            g.aimMs *= 0.6; g.lockMs = Math.min(g.lockMs, g.aimMs * 0.45);
+        }
+    }
+    function updateCoat(dt) {
+        coatCool = Math.max(0, coatCool - dt);
+        ghosts.forEach(g => { if (g.traitor > 0 && (g.traitor = Math.max(0, g.traitor - dt)) === 0) g.victim = null; });
+        if (!disguised) return;
+        coatT -= dt;
+        const w = witnessWeight();
+        if (w) suspect(w * 0.09 * dt / 1000);
+        else suspicion = Math.max(0, suspicion - 0.12 * dt / 1000);
+        if (disguised && coatT <= 0) dropCoat('COVER FADES');
+    }
+    // You ran your head into g while disguised.
+    function sabotage(g) {
+        if (g.immune) { bust(); return; }                 // the armored ghost sees straight through you
+        g.traitor = TRAITOR_MS; g.victim = null; g.cool = 0;
+        if (g.state !== 'hunt') enterState(g, 'hunt');
+        addPopup(g.x, g.y, 'TRAITOR', TRAITOR_COLOR);
+        suspect(0.15 + 0.25 * witnessWeight());           // g itself no longer counts as a witness
+    }
+    function pickVictim(g) {
+        let best = null, bd = Infinity;
+        for (const o of ghosts) {
+            if (o === g || !o.active || o.traitor || o.state === 'daze') continue;
+            const d = tdist(g.x, g.y, o.x, o.y);
+            if (d < bd) { bd = d; best = o; }
+        }
+        return best;
+    }
+    function huntAsTraitor(g, dt) {
+        const v = g.victim;
+        if (!v || !v.active || v.traitor || v.state === 'daze') g.victim = pickVictim(g);
+        g.acc += dt;
+        const step = huntStepMs(g) * 0.45;                // traitors hurry: they have seconds to act
+        if (g.acc >= step) { g.acc -= step; if (g.victim) moveGhost(g, { x: g.victim.x, y: g.victim.y }); }
+        if (g.victim && g.cool <= 0 && tdist(g.x, g.y, g.victim.x, g.victim.y) <= attackRange(g) + 5) enterState(g, 'aim');
+    }
+    // Where to aim: a traitor aims at its victim, everyone else at the player's predicted path.
+    function aimTarget(g, remainMs) {
+        if (!g.traitor) return interceptTarget(g, remainMs);
+        return g.victim && g.victim.active ? { x: g.victim.x, y: g.victim.y } : g.target;
     }
 
     // Solve for an intercept: where will the player be when my lunge can get there?
@@ -492,15 +967,18 @@
         g.state = s; g.t = 0; g.acc = 0;
         if (s === 'aim') {
             g.locked = false;
-            g.aimMs = aimMs(g); g.lockMs = lockMs(g);   // fixed for this wind-up so the telegraph stays honest
-            g.target = interceptTarget(g, g.aimMs);
+            // fixed for this wind-up so the telegraph stays honest (traitors strike faster)
+            g.aimMs = aimMs(g) * (g.traitor ? 0.6 : 1); g.lockMs = Math.min(lockMs(g), g.aimMs * 0.45);
+            g.target = aimTarget(g, g.aimMs);
         }
-        if (s === 'lunge') { g.lungeLeft = Math.min(lungeMax(g), tdist(g.x, g.y, g.target.x, g.target.y) + LUNGE_OVERSHOOT); }
+        if (s === 'lunge') { g.lungeLeft = Math.min(lungeMax(g) + (g.traitor ? 6 : 0), tdist(g.x, g.y, g.target.x, g.target.y) + LUNGE_OVERSHOOT); }
         if (s === 'hunt') { g.trail = []; }
         if (s === 'daze') { g.dazeFor = g.immune ? DAZE_MS : Math.max(DAZE_MS, prism); }
     }
 
     function lungeStep(g) {
+        // a traitor's lunge homes in on its victim, so the sabotage pays off
+        if (g.traitor && g.victim && g.victim.active) g.target = { x: g.victim.x, y: g.victim.y };
         let d = g.dir;
         if (g.x !== g.target.x || g.y !== g.target.y) {
             const dx = wdelta(g.x, g.target.x), dy = wdelta(g.y, g.target.y);
@@ -518,6 +996,17 @@
         }
         stepGhostTo(g, d);
         g.lungeLeft--;
+
+        if (g.traitor) {   // a traitor's lunge dazes any old teammate it passes through, and never hurts you
+            for (const o of ghosts) {
+                if (o === g || !o.active || o.traitor || o.state === 'daze' || o.x !== g.x || o.y !== g.y) continue;
+                enterState(o, 'daze');
+                o.dazeFor = Math.max(o.dazeFor, 3500);
+                addPopup(o.x, o.y, 'BETRAYED', TRAITOR_COLOR);
+            }
+            if (g.lungeLeft <= 0) { enterState(g, 'hunt'); g.cool = 600; }
+            return;
+        }
 
         if (checkContacts()) return;
 
@@ -548,15 +1037,20 @@
 
         switch (g.state) {
             case 'hunt': {
+                if (g.traitor) { huntAsTraitor(g, dt); break; }
                 const h = snake[0];
-                const d = tdist(g.x, g.y, h.x, h.y);
+                const d = disguised ? Infinity : tdist(g.x, g.y, h.x, h.y);   // in disguise you're one of them
                 if (d <= huntRadius(g)) {
                     g.target = g.hunt(g); g.wp = null;
-                } else { // patrol: wander between random waypoints until the player is near
+                } else { // patrol: wander between random waypoints, drifting toward the player's neighbourhood
                     if (!g.wp || (g.x === g.wp.x && g.y === g.wp.y) || g.t > 12000) {
                         g.t = 0;
-                        do { g.wp = { x: wrap(g.x + Math.floor(Math.random() * 41) - 20), y: wrap(g.y + Math.floor(Math.random() * 41) - 20) }; }
-                        while (isWall(g.wp.x, g.wp.y));
+                        const c = Math.random() < 0.6 ? h : g;
+                        g.wp = { x: h.x, y: h.y };
+                        for (let tries = 0; tries < 50; tries++) {
+                            const wp = { x: wrap(c.x + Math.floor(Math.random() * 29) - 14), y: wrap(c.y + Math.floor(Math.random() * 29) - 14) };
+                            if (!isWall(wp.x, wp.y) && inDomain(wp.x, wp.y)) { g.wp = wp; break; }
+                        }
                     }
                     g.target = g.wp;
                 }
@@ -574,7 +1068,7 @@
             }
             case 'aim': {
                 if (g.t < g.aimMs - g.lockMs) {
-                    g.target = interceptTarget(g, g.aimMs - g.t);
+                    g.target = aimTarget(g, g.aimMs - g.t);
                 } else {
                     g.locked = true;
                 }
@@ -617,31 +1111,25 @@
 
         ghosts = [];
         // The seeded rng continues from map generation, so the opening layout is the same every run.
-        const start = findSpawn(Math.floor(rng() * N), Math.floor(rng() * N), N, rng);
+        // You start in a plaza, fenced into the highway block around it.
+        const pk = plazas[Math.floor(rng() * plazas.length)];
+        const px = (pk / CN | 0) * CHUNK + CHUNK / 2, py = (pk % CN) * CHUNK + CHUNK / 2;
+        setupDomain(px, py, rng);
+        const start = findSpawn(px, py, 4, rng);
         placeSnake(start);
         pelletGrid.fill(0);
         pellets = [];
-        for (let i = 0; i < FOOD_COUNT; i++) spawnPellet(rng, 6);
-        for (let i = 0; i < RAINBOW_COUNT; i++) spawnPellet(rng, 15, true);
+        for (let i = 0; i < STAGES[0].food; i++) spawnPellet(rng, 6);
+        for (let i = 0; i < RAINBOW_COUNT; i++) spawnPellet(rng, 12, true);
 
-        ghosts = [];
-        for (let c = 0; c < GHOST_COPIES; c++) GHOST_DEFS.forEach(def => ghosts.push(makeGhost(def, c)));
-        activateGhosts();
+        // Fill the ring around the start: the armored ghost plus the opening cap.
+        ghosts = []; genePool = []; spawnAcc = 0;
+        spawnGhost(true);
+        while (ghosts.length < ghostCap() && spawnGhost());
         invuln = 0; flash = 0; popups = [];
         playerAcc = 0;
         prism = 0; prismChain = 0; rainbowTimers = []; evoAcc = 0;
-    }
-
-    // Silent progression: ghosts whose threshold the heat has passed fade in far away. No banner.
-    function activateGhosts() {
-        const h = heat();
-        ghosts.forEach(g => {
-            if (g.active || h < g.joinAt) return;
-            g.active = true;
-            g.born = playedMs();
-            g.fade = timeLeft < TIME_LIMIT_MS ? 0 : 1;
-            spawnFar(g);
-        });
+        disguised = false; coatT = 0; coatCool = 0; suspicion = 0;
     }
 
     // Find an open cell with room behind (for the body) and a clear runway ahead.
@@ -652,7 +1140,7 @@
             const y = wrap(ny + Math.floor(rand() * (2 * r + 1)) - r);
             const d = DIRS[Math.floor(rand() * 4)];
             let ok = true;
-            for (let k = -2; k <= 8 && ok; k++) if (isWall(x + d.x * k, y + d.y * k)) ok = false;
+            for (let k = -2; k <= 8 && ok; k++) if (isWall(x + d.x * k, y + d.y * k) || !inDomain(x + d.x * k, y + d.y * k)) ok = false;
             if (!ok) continue;
             if (ghosts.some(g => g.active && tdist(g.x, g.y, x, y) < 10)) continue;
             return { x, y, d };
@@ -674,14 +1162,18 @@
     }
 
     // pelletGrid: 0 empty, 1 yellow pellet, 2 rainbow pellet
+    // Pellets only appear inside the open domain. Yellow ones are weighted toward the dangerous
+    // districts (they stack up in warrens); rainbow ones want a warren outright.
     function spawnPellet(rand = Math.random, minDist = 10, rainbow = false) {
-        const h = snake[0];
-        for (let tries = 0; tries < 1000; tries++) {
-            const x = Math.floor(rand() * N), y = Math.floor(rand() * N);
+        const h = snake[0], r = domainRect() || { x: 0, y: 0, w: N, h: N };
+        for (let tries = 0; tries < 1500; tries++) {
+            const x = wrap(r.x + Math.floor(rand() * r.w)), y = wrap(r.y + Math.floor(rand() * r.h));
             const i = idx(x, y);
             if (walls[i] || pelletGrid[i]) continue;
             if (tdist(x, y, h.x, h.y) < minDist) continue;
             if (snake.some(s => s.x === x && s.y === y)) continue;
+            if (rainbow) { if (tries < 800 && (road[i] || districtAt(x, y) !== D_WARREN)) continue; }
+            else if (rand() * PELLET_WEIGHT_MAX > pelletWeight(x, y)) continue;
             pelletGrid[i] = rainbow ? 2 : 1;
             pellets.push({ x, y, rainbow });
             return;
@@ -734,6 +1226,7 @@
         if (k === 'm') { showMinimap = !showMinimap; return; }
         if (k === 'c') { crtOn = !crtOn; return; }
         if (k === 'o') { occlusionOn = !occlusionOn; return; }
+        if (k === 'Escape') { e.preventDefault(); toggleCoat(); return; }
         if (k === 'n' && (state === 'ready' || state === 'over' || state === 'paused')) { restart(true); return; }
         if (k === ' ' || k === 'p') {
             e.preventDefault();
@@ -762,6 +1255,56 @@
         else pressDir(dy > 0 ? DIRS[2] : DIRS[0]);
     });
 
+    // --- TOUCH PAD (phones and the Android app) ---
+    // Virtual joystick: past a small dead zone the dominant axis picks one of the four grid
+    // directions, and each new direction is queued the moment the thumb crosses into it.
+    const stick = document.getElementById('stick'), knob = document.getElementById('knob');
+    let stickId = null, stickDir = -1;
+    function stickMove(e) {
+        const r = stick.getBoundingClientRect();
+        const max = r.width / 2 - 24;
+        let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+        const m = Math.hypot(dx, dy);
+        if (m > max) { dx *= max / m; dy *= max / m; }
+        knob.style.transform = `translate(${dx}px, ${dy}px)`;
+        if (m < r.width * 0.12) { stickDir = -1; return; }          // dead zone
+        const di = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+        if (di !== stickDir) { stickDir = di; pressDir(DIRS[di]); }
+    }
+    function stickEnd(e) {
+        if (e.pointerId !== stickId) return;
+        stickId = null; stickDir = -1;
+        knob.style.transform = '';
+    }
+    stick.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        stickId = e.pointerId; stickDir = -1;
+        stick.setPointerCapture(e.pointerId);
+        stickMove(e);
+    });
+    stick.addEventListener('pointermove', e => { if (e.pointerId === stickId) stickMove(e); });
+    stick.addEventListener('pointerup', stickEnd);
+    stick.addEventListener('pointercancel', stickEnd);
+
+    const btnCoat = document.getElementById('btnCoat'), btnPause = document.getElementById('btnPause');
+    // COAT doubles as NEW (map) on the start and game-over screens, where there's no N key.
+    btnCoat.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        if (state === 'ready' || state === 'over') restart(true);
+        else toggleCoat();
+    });
+    btnPause.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        if (state === 'play') state = 'paused';
+        else if (state === 'paused') state = 'play';
+        else if (state === 'over') restart(false);
+    });
+
+    // Android back button (called by the app shell): pause if playing, otherwise let the app close.
+    window.onAppBack = () => { if (state === 'play') { state = 'paused'; return true; } return false; };
+    window.onAppHidden = () => { if (state === 'play') state = 'paused'; };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) onAppHidden(); });
+
     // --- CORE LOGIC ---
 
     function stepPlayer() {
@@ -771,7 +1314,8 @@
         const head = { x: wrap(snake[0].x + direction.x), y: wrap(snake[0].y + direction.y) };
 
         if (isWall(head.x, head.y)) {
-            addPopup(head.x, head.y, 'CRASH', '#55f');
+            if (isOpaque(head.x, head.y)) addPopup(head.x, head.y, 'CRASH', '#55f');
+            else addPopup(head.x, head.y, 'ZAP', '#f6f');
             if (invuln > 0) { respawnNear(); return; } // grace period: just get put back on the road
             loseLife();
             return;
@@ -807,21 +1351,33 @@
                 spawnPellet();
             }
             scoreEl.innerText = score;
+            eaten++;
+            checkStage(head);
+            const w = disguised ? witnessWeight() : 0;
+            if (w) suspect(0.12 * w);                     // ghosts don't eat pellets
         } else {
             snake.pop();
         }
 
-        checkContacts();
+        checkContacts(true);
     }
 
     // Returns true if the round was interrupted (player hit).
-    function checkContacts() {
+    // byPlayer: the head moved onto the ghost (only that counts as sabotage while disguised).
+    function checkContacts(byPlayer = false) {
         const h = snake[0];
         for (const g of ghosts) {
             if (!g.active || g.x !== h.x || g.y !== h.y) continue;
+            if (g.traitor) continue;                     // on your side, for now
             if (g.state === 'daze') {
                 if (g.immune) continue;          // a dazed armored ghost is harmless, but you can't eat it
+                const w = disguised ? witnessWeight() : 0;
                 eatGhost(g);
+                if (w) suspect(0.2 + 0.3 * w);           // eating one of your "own" in view
+                continue;
+            }
+            if (disguised && g.state === 'hunt') {       // in disguise, idle ghosts don't hurt you
+                if (byPlayer || g.immune) sabotage(g);   // ...but the armored one notices any bump
                 continue;
             }
             if (invuln <= 0) { g.fit += 3; loseLife(); return true; }
@@ -835,9 +1391,7 @@
         score += pts;
         scoreEl.innerText = score;
         addPopup(g.x, g.y, '+' + pts, '#66f');
-        breed(g);          // it comes back as the child of a fitter ghost
-        spawnFar(g);
-        g.cool = 3500 * coolMul(g);
+        g.active = false;  // gone for good; the chunk director breeds a replacement from fitter stock
     }
 
     // Every so often the weakest ghost the player can't currently see molts into a fitter form.
@@ -853,6 +1407,7 @@
         lives--;
         livesEl.innerText = lives;
         flash = 1;
+        if (disguised) dropCoat(null);                   // getting hit tears the disguise off
         if (lives <= 0) { endGame('OUT OF LIVES'); return; }
         // The world persists: respawn near where you fell, and back off anyone mid-attack.
         respawnNear();
@@ -861,7 +1416,7 @@
         ghosts.forEach(g => {
             if (!g.active) return;
             if (g.state === 'aim' || g.state === 'lunge') { enterState(g, 'hunt'); g.cool = 3000; }
-            if (tdist(g.x, g.y, h.x, h.y) < 8) spawnFar(g);
+            if (tdist(g.x, g.y, h.x, h.y) < 8) placeInRing(g);
         });
     }
 
@@ -890,11 +1445,12 @@
         }
         invuln = Math.max(0, invuln - dt);
         prism = Math.max(0, prism - dt);
+        updateCoat(dt);
 
         rainbowTimers = rainbowTimers.map(t => t - dt);
         while (rainbowTimers.length && rainbowTimers[0] <= 0) { rainbowTimers.shift(); spawnPellet(Math.random, 15, true); }
 
-        activateGhosts();
+        directGhosts(dt);
         evoAcc += dt;
         if (evoAcc >= EVOLVE_MS) { evoAcc = 0; evolveWeakest(); }
     }
@@ -1047,6 +1603,7 @@
     const BODY_HEAD = hexToRgb('#FFB000'), BODY_TAIL = hexToRgb('#8a3a00');
     const bodySprite = k => scaleSprite('body' + k, mix(BODY_HEAD, BODY_TAIL, k / 7)); // k: 0 (near head) .. 7 (tail tip)
     const rainbowBodySprite = hb => scaleSprite('rbody' + hb, hsl(hb * 360 / HUES, 0.9, 0.55));
+    const coatBodySprite = k => scaleSprite('coat' + k, mix(hexToRgb('#b89cff'), hexToRgb('#4a3a80'), k / 7));
     function scaleSprite(key, rgb) {
         return cached(key, () => {
             const t = tones(rgb);
@@ -1104,6 +1661,15 @@
         }));
     }
 
+    // Zone fence: a see-through lattice of crackling posts. Two frames so it shimmers.
+    function fenceSprite(frame) {
+        return cached('fence' + frame, () => makeSprite((i, j) => {
+            if ((i + j + frame) % 4 === 0) return '#ff66ff';
+            if ((i + j + frame) % 4 === 2 && (i + frame) % 2) return '#7a1f8a';
+            return null;
+        }));
+    }
+
     // --- pixel primitives ---
     function pixelLine(x0, y0, x1, y1, color, every = 1) {
         const len = Math.hypot(x1 - x0, y1 - y0);
@@ -1153,17 +1719,24 @@
         }
     }
 
+    // Floor studs are tinted by district (green plaza, red warren, blue pillars) and brighter on
+    // highways; ground outside the open domain is barely there.
     function drawFloor() {
-        ctx.fillStyle = '#1a1a1a';
         forViewTiles((wx, wy, left, top) => {
-            if (!isWall(wx, wy)) ctx.fillRect(snap(left), snap(top), P, P);   // faint floor stud at each tile corner
+            if (isWall(wx, wy)) return;
+            ctx.fillStyle = !inDomain(wx, wy) ? '#0e0e0e' : road[idx(wx, wy)] ? ROAD_STUD : DISTRICT_STUD[districtAt(wx, wy)];
+            ctx.fillRect(snap(left), snap(top), P, P);
+            if (road[idx(wx, wy)] && inDomain(wx, wy)) ctx.fillRect(snap(left) + GRID_SIZE / 2, snap(top) + GRID_SIZE / 2, P, P);
         });
     }
 
-    function drawWalls() {
+    function drawWalls(now) {
+        const ff = Math.floor(now / 160) % 2;
         forViewTiles((wx, wy, left, top) => {
-            if (!isWall(wx, wy)) return;
-            const mask = (isWall(wx, wy - 1) ? 1 : 0) | (isWall(wx + 1, wy) ? 2 : 0) | (isWall(wx, wy + 1) ? 4 : 0) | (isWall(wx - 1, wy) ? 8 : 0);
+            const w = walls[idx(wx, wy)];
+            if (!w) return;
+            if (w === 2) { ctx.drawImage(fenceSprite(ff), snap(left), snap(top)); return; }
+            const mask = (isOpaque(wx, wy - 1) ? 1 : 0) | (isOpaque(wx + 1, wy) ? 2 : 0) | (isOpaque(wx, wy + 1) ? 4 : 0) | (isOpaque(wx - 1, wy) ? 8 : 0);
             ctx.drawImage(wallSprite(mask), snap(left), snap(top));
         });
     }
@@ -1201,13 +1774,13 @@
             sctx.closePath();
         };
         forViewTiles((wx, wy, l, t) => {
-            if (!isWall(wx, wy)) return;
+            if (!isOpaque(wx, wy)) return;   // fences are see-through
             const r = l + g, b = t + g;
             // only outer edges of a wall piece that face the eye cast shadow
-            if (ey < t && !isWall(wx, wy - 1)) quad([l, t], [r, t]);
-            if (ex > r && !isWall(wx + 1, wy)) quad([r, t], [r, b]);
-            if (ey > b && !isWall(wx, wy + 1)) quad([r, b], [l, b]);
-            if (ex < l && !isWall(wx - 1, wy)) quad([l, b], [l, t]);
+            if (ey < t && !isOpaque(wx, wy - 1)) quad([l, t], [r, t]);
+            if (ex > r && !isOpaque(wx + 1, wy)) quad([r, t], [r, b]);
+            if (ey > b && !isOpaque(wx, wy + 1)) quad([r, b], [l, b]);
+            if (ex < l && !isOpaque(wx - 1, wy)) quad([l, b], [l, t]);
         });
         sctx.fillStyle = '#000';
         sctx.fill();
@@ -1230,7 +1803,7 @@
         const n = Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 3);
         for (let k = 1; k < n; k++) {
             const t = k / n;
-            if (isWall(Math.round(h.x + dx * t), Math.round(h.y + dy * t))) return false;
+            if (isOpaque(Math.round(h.x + dx * t), Math.round(h.y + dy * t))) return false;
         }
         return true;
     }
@@ -1261,7 +1834,8 @@
         if (g.state === 'daze') mode = (g.t > g.dazeFor - 500 && Math.floor(now / 100) % 2) ? 'flash' : 'daze';
         let look = lookIndex(g.dir.x, g.dir.y);
         if (g.state === 'aim') look = lookIndex(wdelta(g.x, g.target.x), wdelta(g.y, g.target.y));
-        const sprite = ghostSprite(g.color, frame, look, mode, tier(g), g.immune);
+        const col = g.traitor ? TRAITOR_COLOR : g.color;
+        const sprite = ghostSprite(col, frame, look, mode, tier(g), g.immune);
 
         // lunge afterimages
         if (g.state === 'lunge') {
@@ -1273,7 +1847,11 @@
         ctx.globalAlpha = g.vis * g.fade;
         ctx.drawImage(sprite, snap(x), snap(y));
         ctx.globalAlpha = 1;
-        if (g.state === 'aim' && g.locked && g.vis > 0.5) pixelText('!', x + s / 2, y - 3, 10, '#fff', g.color);
+        if (g.state === 'aim' && g.locked && g.vis > 0.5) pixelText('!', x + s / 2, y - 3, 10, '#fff', col);
+        // while you're disguised, ghosts that can see you show it: ? watching, ! nearly onto you
+        else if (disguised && g.vis > 0.5 && watching(g)) {
+            pixelText(suspicion > 0.7 ? '!' : '?', x + s / 2, y - 3, 10, g.immune ? '#f33' : '#fd4', '#000');
+        }
     }
 
     // A hidden ghost still shows its reticle (that's your warning), but not the line back to it.
@@ -1281,21 +1859,22 @@
         const fx = sx(g.x), fy = sy(g.y);
         const tx = fx + wdelta(g.x, g.target.x) * GRID_SIZE, ty = fy + wdelta(g.y, g.target.y) * GRID_SIZE;
         const progress = Math.min(1, g.t / g.aimMs);
+        const col = g.traitor ? TRAITOR_COLOR : g.color;
 
         ctx.save();
         ctx.globalAlpha = (g.locked ? 0.9 : 0.35 + 0.35 * progress) * g.vis;
-        pixelLine(fx, fy, tx, ty, g.color, g.locked ? 1 : 3);
+        pixelLine(fx, fy, tx, ty, col, g.locked ? 1 : 3);
 
         // reticle
         const r = g.locked ? GRID_SIZE * 0.7 : GRID_SIZE * (1.5 - 0.8 * progress) + Math.sin(now / 60) * 1.5;
         ctx.globalAlpha = g.locked ? 1 : 0.75;
-        pixelRing(tx, ty, r, g.color);
+        pixelRing(tx, ty, r, col);
         for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-            pixelLine(tx + ux * (r - 4), ty + uy * (r - 4), tx + ux * (r + 4), ty + uy * (r + 4), g.color);
+            pixelLine(tx + ux * (r - 4), ty + uy * (r - 4), tx + ux * (r + 4), ty + uy * (r + 4), col);
         }
         if (g.locked) { // dithered, pulsing target cell
             const on = Math.floor(now / 70) % 2;
-            ctx.fillStyle = g.color;
+            ctx.fillStyle = col;
             ctx.globalAlpha = 0.55;
             const L = snap(tx - GRID_SIZE / 2), T = snap(ty - GRID_SIZE / 2);
             for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
@@ -1328,19 +1907,38 @@
 
         // under a prism the body cycles the spectrum, and flickers back to normal as it runs out
         const rainbow = prism > 0 && !(prism < 1500 && Math.floor(now / 120) % 2);
+        // in disguise the body goes ghostly lavender, flickering as the cover runs out
+        const coat = disguised && !(coatT < 1500 && Math.floor(now / 120) % 2);
         const roll = Math.floor(now / 60);
+        const di = DIRS.findIndex(d => d.x === direction.x && d.y === direction.y);
         for (let i = snake.length - 1; i >= 1; i--) {
             const part = snake[i];
             const k = Math.min(7, Math.floor((i / snake.length) * 8));
-            const spr = rainbow ? rainbowBodySprite(((roll - i) % HUES + HUES) % HUES) : bodySprite(k);
+            const spr = coat ? coatBodySprite(k) : rainbow ? rainbowBodySprite(((roll - i) % HUES + HUES) % HUES) : bodySprite(k);
+            if (coat) ctx.globalAlpha = (blink ? 0.3 : 1) * 0.6;
             ctx.drawImage(spr, snap(sx(part.x) - g / 2), snap(sy(part.y) - g / 2));
         }
+        ctx.globalAlpha = blink ? 0.3 : 1;
 
-        // head: the "Pac" in Snake-Man, chomping in the direction of travel
-        const di = DIRS.findIndex(d => d.x === direction.x && d.y === direction.y);
-        const frame = state === 'play' ? [0, 1, 2, 1][Math.floor(now / 60) % 4] : 1;
-        ctx.drawImage(pacSprite(di, frame), snap(sx(snake[0].x) - g / 2), snap(sy(snake[0].y) - g / 2));
+        const hx = snap(sx(snake[0].x) - g / 2), hy = snap(sy(snake[0].y) - g / 2);
+        if (coat) {
+            // the head wears a ghost costume
+            ctx.drawImage(ghostSprite(COAT_COLOR, Math.floor(now / 150) % 2, di, 'normal'), hx, hy);
+        } else {
+            // head: the "Pac" in Snake-Man, chomping in the direction of travel
+            const frame = state === 'play' ? [0, 1, 2, 1][Math.floor(now / 60) % 4] : 1;
+            ctx.drawImage(pacSprite(di, frame), hx, hy);
+        }
         ctx.globalAlpha = 1;
+
+        if (disguised) {   // suspicion meter over your head: yellow → red
+            const bw = GRID_SIZE + 8, bx = snap(sx(snake[0].x) - bw / 2), by = snap(sy(snake[0].y) - g / 2 - 10);
+            ctx.fillStyle = '#000'; ctx.fillRect(bx - P, by - P, bw + 2 * P, 4 + 2 * P);
+            ctx.fillStyle = rgbStr(mix([255, 220, 60], [255, 40, 40], suspicion));
+            ctx.fillRect(bx, by, snap(bw * suspicion), 4);
+            ctx.fillStyle = COAT_COLOR;
+            ctx.fillRect(bx, by + 4 + P, snap(bw * Math.max(0, coatT) / COAT_MS), P);   // cover time left
+        }
     }
 
     function drawMinimap(now) {
@@ -1359,7 +1957,7 @@
         // with shadows on, the minimap only shows ghosts you can actually see
         ghosts.forEach(gh => {
             if (!gh.active || gh.vis < 0.5) return;
-            ctx.fillStyle = gh.state === 'daze' ? (gh.immune ? '#999' : '#44f') : gh.color;
+            ctx.fillStyle = gh.traitor ? TRAITOR_COLOR : gh.state === 'daze' ? (gh.immune ? '#999' : '#44f') : gh.color;
             ctx.fillRect(ox + gh.x * s - 1, oy + gh.y * s - 1, 3.5, 3.5);
         });
         // viewport box (drawn wrapped)
@@ -1466,7 +2064,7 @@
         // Line of sight: shadow the floor behind walls, then lay the walls on top
         updateVisibility(dt);
         if (occlusionOn) drawOcclusion(sx(snake[0].x), sy(snake[0].y));
-        drawWalls();
+        drawWalls(now);
 
         // Attack telegraphs under everything else
         ghosts.forEach(g => { if (g.active && g.state === 'aim') drawAim(g, now); });
@@ -1492,14 +2090,25 @@
             flash = Math.max(0, flash - dt / 400);
         }
 
-        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], ['PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], ['N: NEW MAP   C: CRT   O: SHADOWS', 10, '#777']]);
-        if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], ['SPACE TO RESUME', 12, '#999']]);
-        if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'], ['ENTER/SPACE: SAME MAP', 10, '#999'], ['N: NEW MAP', 10, '#999']]);
+        const touch = document.documentElement.classList.contains('touch');
+        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], [touch ? 'PUSH THE STICK' : 'PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], [touch ? 'COAT: PASS AS A GHOST' : 'ESC: TURNCOAT - PASS AS A GHOST', 10, COAT_COLOR], touch ? ['NEW: NEW MAP', 10, '#777'] : ['N: NEW MAP   C: CRT   O: SHADOWS', 10, '#777']]);
+        if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], [touch ? 'TAP GO TO RESUME' : 'SPACE TO RESUME', 12, '#999']]);
+        if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'], [touch ? 'AGAIN: SAME MAP' : 'ENTER/SPACE: SAME MAP', 10, '#999'], [touch ? 'NEW: NEW MAP' : 'N: NEW MAP', 10, '#999']]);
 
         present(now);
 
         timeEl.innerText = fmtTime(timeLeft);
         timeEl.className = timeLeft <= 30000 ? 'low' : '';
+        const next = STAGES[stage + 1];
+        zoneEl.innerText = (stage + 1) + '/' + STAGES.length + (next ? ' (' + (next.at - eaten) + ')' : '');
+        coatEl.innerText = disguised ? (coatT / 1000).toFixed(1) + 's' : coatCool > 0 ? Math.ceil(coatCool / 1000) + 's' : 'READY';
+        coatEl.style.color = disguised ? COAT_COLOR : coatCool > 0 ? '#666' : '';
+        btnCoat.classList.toggle('on', disguised);
+        btnCoat.classList.toggle('cool', coatCool > 0);
+        const pauseLabel = state === 'paused' ? 'GO' : state === 'over' ? 'AGAIN' : 'PAUSE';
+        if (btnPause.innerText !== pauseLabel) btnPause.innerText = pauseLabel;
+        const coatLabel = state === 'ready' || state === 'over' ? 'NEW' : 'COAT';
+        if (btnCoat.innerText !== coatLabel) btnCoat.innerText = coatLabel;
         const f = n => (n >= 0 ? ' ' : '−') + Math.abs(n).toFixed(2);
         kinEl.innerHTML = `<span class="v">ẋ (${f(kin.v.x)},${f(kin.v.y)})</span> &nbsp; <span class="a">ẍ (${f(kin.a.x)},${f(kin.a.y)})</span>`;
     }

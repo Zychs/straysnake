@@ -1,0 +1,42 @@
+name: Android APK
+
+# Builds the Snake-Man Android app (a WebView around snake-man.html) and uploads a debug APK.
+on:
+  push:
+    paths:
+      - 'snake-man.html'
+      - 'android/**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          # the action's default list includes the retired 'tools' package, which no longer resolves
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        run: gradle -p android assembleDebug --no-daemon --stacktrace
+
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk snake-man-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snake-man-apk
+          path: snake-man-debug.apk
+          retention-days: 30

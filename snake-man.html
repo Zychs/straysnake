@@ -122,7 +122,6 @@
 
     const TIME_LIMIT_MS  = 5 * 60 * 1000;
     const FOOD_COUNT     = 45;
-    const GHOST_COPIES   = 2;     // two of each ghost roam the big map
 
     const LUNGE_OVERSHOOT = 2;
     const DAZE_MS        = 1600;
@@ -357,19 +356,15 @@
         { name: 'CLYDE',  color: '#FFB800', hunt: g => toCell(trailCentroid()), aimOrder: 1, late: true },
     ];
 
-    // Ghosts don't all start on the board: the rest slip in unannounced as the heat rises.
-    const JOIN_AT = { BLINKY: [0, 0.10], PINKY: [0, 0.18], INKY: [0, 0.26], CLYDE: [0.32, 0.45] };
-
-    function makeGhost(def, copy) {
+    // immune: the one armored ghost. Rainbows don't turn it blue and it can never be eaten.
+    function makeGhost(def, immune = false) {
         const g = {
             ...def, x: 0, y: 0, dir: { x: 1, y: 0 },
             state: 'hunt', t: 0, acc: 0, cool: 0,
             target: { x: 0, y: 0 }, wp: null, locked: false, lungeLeft: 0,
-            trail: [], active: false, fade: 1, vis: 0,
-            joinAt: JOIN_AT[def.name][copy],
-            // The first BLINKY is armored: rainbows don't turn it blue and it can never be eaten.
-            immune: def.name === 'BLINKY' && copy === 0,
-            genes: {}, gen: 1, fit: 0, born: 0,
+            trail: [], active: true, fade: 0, vis: 0, farFor: 0,
+            immune,
+            genes: {}, gen: 1, fit: 0, born: playedMs(),
         };
         for (const k of GENES) g.genes[k] = 0.15 + Math.random() * 0.2;
         return g;
@@ -377,17 +372,30 @@
 
     // --- PROCEDURAL EVOLUTION ---
     // Each ghost carries five genes in 0..1 (0 = timid, 1 = deadly). A ghost that lands hits
-    // earns fitness; one that gets eaten comes back as the mutated child of a fit survivor.
+    // earns fitness. New ghosts are bred from fit survivors and from the gene pool that
+    // despawned ghosts leave behind; an eaten ghost's genes are simply lost.
     const GENES = ['speed', 'wind', 'reach', 'sense', 'nerve'];
     const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 0.8;
     const geneCap = () => 0.4 + 0.6 * heatE();   // evolution can't outrun the difficulty dial
+    const GENE_POOL_MAX = 16;
+    let genePool = [];                             // { genes, gen, worth } of despawned ghosts
+
+    function archive(g) {
+        genePool.push({ genes: { ...g.genes }, gen: g.gen, worth: fitRate(g) });
+        if (genePool.length > GENE_POOL_MAX) {
+            genePool.sort((a, b) => b.worth - a.worth);
+            genePool.length = GENE_POOL_MAX;
+        }
+    }
 
     function breed(child) {
-        const pool = ghosts.filter(o => o.active && o !== child);
+        const pool = ghosts.filter(o => o.active && o !== child)
+            .map(o => ({ genes: o.genes, gen: o.gen, worth: fitRate(o) }))
+            .concat(genePool);
         const pick = () => pool[Math.floor(Math.random() * pool.length)];
         let parent = child, mate = child;
         if (pool.length) {
-            const worth = o => fitRate(o) + o.gen * 0.1;
+            const worth = o => o.worth + o.gen * 0.1;
             parent = [pick(), pick(), pick()].reduce((a, b) => worth(b) > worth(a) ? b : a);   // tournament of three
             mate = pick();
         }
@@ -424,18 +432,95 @@
         return ghosts.some(o => o !== except && o.active && o.x === x && o.y === y);
     }
 
-    function spawnFar(g) {
+    // --- CHUNK DIRECTOR (Minecraft-style mob spawning) ---
+    // The world is 9x9 chunks of 10x10 tiles. Ghosts only exist near the player: they spawn in
+    // the ring of chunks just outside the 30x30 view (emptiest chunks first, so they surround
+    // you instead of bunching up), and despawn once they're left far behind and unseen. How
+    // many exist at once follows the silent heat dial.
+    const CHUNK = 10, CN = N / CHUNK;
+    const SPAWN_RING   = 2;       // chunk distance new ghosts appear at
+    const DESPAWN_RING = 3;       // unseen, idle ghosts this far out get culled...
+    const DESPAWN_MS   = 2500;    // ...after lingering there this long
+    const CHUNK_CAP    = 2;       // at most this many ghosts share a chunk when spawning
+    const chunkOf = v => Math.floor(wrap(v) / CHUNK);
+    const cdist = (a, b) => { const d = Math.abs(a - b) % CN; return Math.min(d, CN - d); };
+    function chunkDist(x, y) {
         const h = snake[0];
-        for (let tries = 0; tries < 400; tries++) {
-            const x = Math.floor(Math.random() * N);
-            const y = Math.floor(Math.random() * N);
-            if (isWall(x, y) || tdist(x, y, h.x, h.y) < 20) continue;
-            if (snake.some(s => s.x === x && s.y === y) || occupied(x, y, g)) continue;
-            g.x = x; g.y = y; break;
-        }
+        return Math.max(cdist(chunkOf(x), chunkOf(h.x)), cdist(chunkOf(y), chunkOf(h.y)));
+    }
+    const ghostCap     = () => Math.round(lerp(5, 14, heatE()));
+    const spawnEveryMs = () => lerp(1500, 600, heatE());
+    let spawnAcc = 0;
+
+    function resetGhost(g) {
         g.dir = DIRS[Math.floor(Math.random() * 4)];
         g.state = 'hunt'; g.t = 0; g.acc = 0; g.locked = false; g.trail = []; g.wp = null;
+        g.fade = 0; g.farFor = 0;
         g.cool = (1500 + Math.random() * 2500) * coolMul(g);
+    }
+
+    // Put g on an open tile in the emptiest chunk of the spawn ring, out of the player's sight.
+    function placeInRing(g) {
+        const h = snake[0], hx = chunkOf(h.x), hy = chunkOf(h.y);
+        const counts = new Map();
+        ghosts.forEach(o => {
+            if (o === g || !o.active) return;
+            const k = chunkOf(o.x) * CN + chunkOf(o.y);
+            counts.set(k, (counts.get(k) || 0) + 1);
+        });
+        const ring = [];
+        for (let dy = -SPAWN_RING; dy <= SPAWN_RING; dy++) for (let dx = -SPAWN_RING; dx <= SPAWN_RING; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== SPAWN_RING) continue;
+            const cx = (hx + dx + CN) % CN, cy = (hy + dy + CN) % CN;
+            const n = counts.get(cx * CN + cy) || 0;
+            if (n < CHUNK_CAP) ring.push({ cx, cy, n: n + Math.random() * 0.9 });
+        }
+        ring.sort((a, b) => a.n - b.n);
+        for (const c of ring) {
+            for (let tries = 0; tries < 30; tries++) {
+                const x = c.cx * CHUNK + Math.floor(Math.random() * CHUNK);
+                const y = c.cy * CHUNK + Math.floor(Math.random() * CHUNK);
+                if (isWall(x, y) || occupied(x, y, g) || tdist(x, y, h.x, h.y) < 16) continue;
+                if (onScreen(x, y) && lineOfSight(x, y)) continue;
+                g.x = x; g.y = y;
+                resetGhost(g);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Pick the least-represented ghost type (CLYDE only once the heat is up).
+    function pickType() {
+        const types = GHOST_DEFS.filter(d => !d.late || heat() >= 0.32);
+        const count = d => ghosts.filter(g => g.active && g.name === d.name).length + Math.random() * 0.9;
+        return types.reduce((a, b) => count(b) < count(a) ? b : a);
+    }
+
+    function spawnGhost(immune = false) {
+        const g = makeGhost(immune ? GHOST_DEFS[0] : pickType(), immune);
+        if (!immune) breed(g);
+        if (!placeInRing(g)) return false;
+        ghosts.push(g);
+        return true;
+    }
+
+    function directGhosts(dt) {
+        ghosts = ghosts.filter(g => g.active);   // drop eaten ghosts
+        for (const g of ghosts) {
+            const idle = g.state === 'hunt' || g.state === 'daze';
+            g.farFor = idle && g.vis < 0.05 && chunkDist(g.x, g.y) >= DESPAWN_RING ? g.farFor + dt : 0;
+            if (g.farFor < DESPAWN_MS) continue;
+            if (g.immune) { placeInRing(g); continue; }   // the armored ghost never leaves: it follows you
+            archive(g);
+            g.active = false;
+        }
+        ghosts = ghosts.filter(g => g.active);
+        spawnAcc += dt;
+        if (ghosts.length < ghostCap() && spawnAcc >= spawnEveryMs()) {
+            spawnAcc = 0;
+            spawnGhost();
+        }
     }
 
     function attackers() {
@@ -552,10 +637,11 @@
                 const d = tdist(g.x, g.y, h.x, h.y);
                 if (d <= huntRadius(g)) {
                     g.target = g.hunt(g); g.wp = null;
-                } else { // patrol: wander between random waypoints until the player is near
+                } else { // patrol: wander between random waypoints, drifting toward the player's neighbourhood
                     if (!g.wp || (g.x === g.wp.x && g.y === g.wp.y) || g.t > 12000) {
                         g.t = 0;
-                        do { g.wp = { x: wrap(g.x + Math.floor(Math.random() * 41) - 20), y: wrap(g.y + Math.floor(Math.random() * 41) - 20) }; }
+                        const c = Math.random() < 0.6 ? h : g;
+                        do { g.wp = { x: wrap(c.x + Math.floor(Math.random() * 29) - 14), y: wrap(c.y + Math.floor(Math.random() * 29) - 14) }; }
                         while (isWall(g.wp.x, g.wp.y));
                     }
                     g.target = g.wp;
@@ -624,24 +710,13 @@
         for (let i = 0; i < FOOD_COUNT; i++) spawnPellet(rng, 6);
         for (let i = 0; i < RAINBOW_COUNT; i++) spawnPellet(rng, 15, true);
 
-        ghosts = [];
-        for (let c = 0; c < GHOST_COPIES; c++) GHOST_DEFS.forEach(def => ghosts.push(makeGhost(def, c)));
-        activateGhosts();
+        // Fill the ring around the start: the armored ghost plus the opening cap.
+        ghosts = []; genePool = []; spawnAcc = 0;
+        spawnGhost(true);
+        while (ghosts.length < ghostCap() && spawnGhost());
         invuln = 0; flash = 0; popups = [];
         playerAcc = 0;
         prism = 0; prismChain = 0; rainbowTimers = []; evoAcc = 0;
-    }
-
-    // Silent progression: ghosts whose threshold the heat has passed fade in far away. No banner.
-    function activateGhosts() {
-        const h = heat();
-        ghosts.forEach(g => {
-            if (g.active || h < g.joinAt) return;
-            g.active = true;
-            g.born = playedMs();
-            g.fade = timeLeft < TIME_LIMIT_MS ? 0 : 1;
-            spawnFar(g);
-        });
     }
 
     // Find an open cell with room behind (for the body) and a clear runway ahead.
@@ -835,9 +910,7 @@
         score += pts;
         scoreEl.innerText = score;
         addPopup(g.x, g.y, '+' + pts, '#66f');
-        breed(g);          // it comes back as the child of a fitter ghost
-        spawnFar(g);
-        g.cool = 3500 * coolMul(g);
+        g.active = false;  // gone for good; the chunk director breeds a replacement from fitter stock
     }
 
     // Every so often the weakest ghost the player can't currently see molts into a fitter form.
@@ -861,7 +934,7 @@
         ghosts.forEach(g => {
             if (!g.active) return;
             if (g.state === 'aim' || g.state === 'lunge') { enterState(g, 'hunt'); g.cool = 3000; }
-            if (tdist(g.x, g.y, h.x, h.y) < 8) spawnFar(g);
+            if (tdist(g.x, g.y, h.x, h.y) < 8) placeInRing(g);
         });
     }
 
@@ -894,7 +967,7 @@
         rainbowTimers = rainbowTimers.map(t => t - dt);
         while (rainbowTimers.length && rainbowTimers[0] <= 0) { rainbowTimers.shift(); spawnPellet(Math.random, 15, true); }
 
-        activateGhosts();
+        directGhosts(dt);
         evoAcc += dt;
         if (evoAcc >= EVOLVE_MS) { evoAcc = 0; evolveWeakest(); }
     }

@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SNAKE-MAN: TOROIDAL EDITION</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 12px 16px;
+            box-sizing: border-box;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+        }
+        canvas {
+            border: 6px solid #222;
+            border-radius: 18px;
+            box-shadow: 0 0 0 2px #333, 0 0 30px rgba(0, 255, 0, 0.18), inset 0 0 40px #000;
+            image-rendering: pixelated;
+            background: #000;
+            width: min(600px, 92vw);
+            height: auto;
+            touch-action: none;
+        }
+        .stats {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 6px 36px;
+            font-family: 'Press Start 2P', 'Courier New', monospace;
+            font-size: 16px;
+            text-shadow: 2px 2px 0 #030;
+            margin-bottom: 10px;
+        }
+        #time.low { color: #f33; }
+        .kin {
+            font-size: 14px;
+            color: #6a6;
+            margin-bottom: 8px;
+            min-height: 1em;
+        }
+        .kin .v { color: #0ff; }
+        .kin .a { color: #f0f; }
+        .help {
+            margin-top: 12px;
+            color: #888;
+            text-align: center;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: auto auto auto;
+            gap: 2px 14px;
+            margin: 10px auto 0;
+            text-align: left;
+            font-size: 13px;
+            color: #aaa;
+            width: fit-content;
+        }
+        .legend b { font-weight: normal; }
+        .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px 5px 2px 2px; margin-right: 6px; }
+    </style>
+</head>
+<body>
+
+    <div class="stats">
+        <div>SCORE: <span id="score">0</span></div>
+        <div>HI: <span id="hi">0</span></div>
+        <div>LIVES: <span id="lives">3</span></div>
+        <div>TIME: <span id="time">5:00</span></div>
+    </div>
+    <div class="kin" id="kin"></div>
+
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+
+    <div class="help">
+        ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • C CRT • N NEW MAP<br>
+        THE WORLD WRAPS (TOROIDAL LOGIC) • <span style="color:#55f">BLUE WALLS</span> ARE SOLID: CRASHING COSTS A LIFE<br>
+        EAT YELLOW DOTS TO GROW • SCORE ALL YOU CAN BEFORE THE 5:00 CLOCK RUNS OUT<br>
+        GHOSTS READ YOUR MOTION, AIM, LOCK, THEN LUNGE: <span style="color:#ddd">BREAK YOUR RHYTHM WHEN A RETICLE LOCKS</span><br>
+        LUNGES BONK OFF WALLS • A LUNGE INTO YOUR BODY SNIPS THE TAIL • <span style="color:#66f">BLUE</span> DAZED GHOSTS ARE EDIBLE
+        <div class="legend">
+            <span><span class="dot" style="background:#FF0000"></span>BLINKY</span><b>x</b><span>lunges where you <i>are</i></span>
+            <span><span class="dot" style="background:#FFB8FF"></span>PINKY</span><b>ẋ</b><span>leads your velocity</span>
+            <span><span class="dot" style="background:#00FFFF"></span>INKY</span><b>ẍ</b><span>follows your curve (accel)</span>
+            <span><span class="dot" style="background:#FFB800"></span>CLYDE</span><b>∫x</b><span>camps your loops (joins at 100)</span>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const dctx = canvas.getContext('2d');          // the visible screen (after the CRT pass)
+    const scene = document.createElement('canvas'); // the game is drawn here first
+    scene.width = canvas.width; scene.height = canvas.height;
+    const ctx = scene.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const hiEl = document.getElementById('hi');
+    const livesEl = document.getElementById('lives');
+    const timeEl = document.getElementById('time');
+    const kinEl = document.getElementById('kin');
+
+    // --- CONFIG ---
+    const GRID_SIZE = 20;
+    const W = canvas.width;
+    const VIEW = W / GRID_SIZE;   // 30x30 tiles visible
+    const TILE_COUNT = 90;        // the world is 90x90 tiles and wraps on both axes
+
+    const TIME_LIMIT_MS  = 5 * 60 * 1000;
+    const FOOD_COUNT     = 45;
+    const GHOST_COPIES   = 2;     // two of each ghost roam the big map
+
+    const PLAYER_STEP_MS = 100;   // 10 steps/sec for that retro feel
+    const HUNT_STEP_MS   = 320;   // ghosts roam ~3x slower than you
+    const HUNT_STEP_MIN  = 210;   // ...and speed up a little as you score
+    const HUNT_RADIUS    = 26;    // beyond this a ghost patrols instead of hunting
+    const AIM_MS         = 1000;  // wind-up: reticle tracks your predicted motion
+    const LOCK_MS        = 350;   // last part of wind-up: reticle freezes (your cue to juke)
+    const LUNGE_STEP_MS  = 80;    // the lunge itself is faster than you
+    const LUNGE_OVERSHOOT = 2;
+    const LUNGE_MAX      = 16;
+    const DAZE_MS        = 1600;
+    const DAZE_STEP_MS   = 480;
+    const ATTACK_RANGE   = 11;    // torus manhattan distance to start an attack
+    const MAX_ATTACKERS  = 2;
+    const INVULN_MS      = 2000;
+    const CLYDE_SCORE    = 100;
+
+    // --- TORUS HELPERS ---
+    const N = TILE_COUNT;
+    const wrap = v => ((v % N) + N) % N;
+    const idx = (x, y) => wrap(y) * N + wrap(x);
+    function wdelta(a, b) { // shortest signed step from a to b around the ring
+        let d = wrap(b - a);
+        if (d > N / 2) d -= N;
+        return d;
+    }
+    function wdeltaF(a, b) { // same, for fractional positions (camera)
+        let d = (b - a) % N;
+        if (d > N / 2) d -= N;
+        if (d < -N / 2) d += N;
+        return d;
+    }
+    const tdist = (ax, ay, bx, by) => Math.abs(wdelta(ax, bx)) + Math.abs(wdelta(ay, by));
+    const DIRS = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+
+    function mulberry32(a) {
+        return function () {
+            a |= 0; a = a + 0x6D2B79F5 | 0;
+            let t = Math.imul(a ^ a >>> 15, 1 | a);
+            t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+            return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+    }
+
+    // --- THE MAP (seeded, so the same world persists across runs and reloads) ---
+    const walls = new Uint8Array(N * N);
+    const pelletGrid = new Uint8Array(N * N);
+    const isWall = (x, y) => walls[idx(x, y)] === 1;
+    let mapSeed = 0;
+    let rng = Math.random;
+    const minimap = document.createElement('canvas');
+    const MM_SCALE = 1.6;
+    minimap.width = minimap.height = Math.ceil(N * MM_SCALE);
+
+    function generateMap(seed) {
+        rng = mulberry32(seed);
+        walls.fill(0);
+        const ri = (a, b) => a + Math.floor(rng() * (b - a + 1));
+        const shapes = [
+            () => { const l = ri(3, 9); return Array.from({ length: l }, (_, i) => [i, 0]); },                 // horizontal bar
+            () => { const l = ri(3, 9); return Array.from({ length: l }, (_, i) => [0, i]); },                 // vertical bar
+            () => { const a = ri(3, 6), b = ri(3, 6), sx = rng() < .5 ? 1 : -1, sy = rng() < .5 ? 1 : -1;      // L
+                    const c = []; for (let i = 0; i < a; i++) c.push([i * sx, 0]); for (let j = 1; j < b; j++) c.push([(a - 1) * sx, j * sy]); return c; },
+            () => { const w = ri(2, 4), h = ri(2, 3); const c = []; for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) c.push([i, j]); return c; }, // block
+            () => { const r = ri(1, 3); const c = [[0, 0]]; for (let i = 1; i <= r; i++) c.push([i, 0], [-i, 0], [0, i], [0, -i]); return c; },           // plus
+            () => { const w = ri(4, 8), h = ri(2, 4), flip = rng() < .5 ? 1 : -1;                                // U bracket
+                    const c = []; for (let i = 0; i < w; i++) c.push([i, 0]); for (let j = 1; j < h; j++) c.push([0, j * flip], [w - 1, j * flip]); return c; },
+        ];
+        // Pieces never touch each other (2-tile gap), so every corridor is at least 2 wide
+        // and nothing can seal off a pocket.
+        let placed = 0;
+        for (let attempt = 0; attempt < 4000 && placed < 170; attempt++) {
+            const ox = ri(0, N - 1), oy = ri(0, N - 1);
+            const cells = shapes[ri(0, shapes.length - 1)]().map(([dx, dy]) => [ox + dx, oy + dy]);
+            let ok = true;
+            for (const [cx, cy] of cells) {
+                for (let dx = -2; dx <= 2 && ok; dx++) for (let dy = -2; dy <= 2; dy++) {
+                    if (isWall(cx + dx, cy + dy)) { ok = false; break; }
+                }
+                if (!ok) break;
+            }
+            if (!ok) continue;
+            cells.forEach(([cx, cy]) => { walls[idx(cx, cy)] = 1; });
+            placed++;
+        }
+        renderMinimapBase();
+    }
+
+    function renderMinimapBase() {
+        const m = minimap.getContext('2d');
+        m.clearRect(0, 0, minimap.width, minimap.height);
+        m.fillStyle = 'rgba(0,0,0,0.75)';
+        m.fillRect(0, 0, minimap.width, minimap.height);
+        m.fillStyle = '#2a2aff';
+        for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+            if (walls[idx(x, y)]) m.fillRect(x * MM_SCALE, y * MM_SCALE, Math.ceil(MM_SCALE), Math.ceil(MM_SCALE));
+        }
+    }
+
+    function loadSeed() {
+        let s = 0;
+        try { s = parseInt(localStorage.getItem('snakeman-seed'), 10) || 0; } catch (e) {}
+        if (!s) s = newSeed();
+        return s;
+    }
+    function newSeed() {
+        const s = 1 + Math.floor(Math.random() * 999999);
+        try { localStorage.setItem('snakeman-seed', s); } catch (e) {}
+        return s;
+    }
+
+    // --- GAME STATE ---
+    let score = 0;
+    let lives = 3;
+    let hi = 0;
+    try { hi = +localStorage.getItem('snakeman-hi') || 0; } catch (e) {}
+    hiEl.innerText = hi;
+
+    let state = 'ready'; // ready | play | paused | over
+    let overReason = '';
+    let timeLeft = TIME_LIMIT_MS;
+    let snake = [];
+    let direction = { x: 0, y: -1 };
+    let inputQueue = [];
+    let pellets = [];
+    let ghosts = [];
+    let invuln = 0;
+    let flash = 0;
+    let popups = [];
+    let showDerivs = true;
+    let showMinimap = true;
+    let playerAcc = 0;
+    const cam = { x: 0, y: 0 };
+
+    // --- PLAYER KINEMATICS (the derivatives the ghosts read) ---
+    // Position is tracked unwrapped so velocity/acceleration don't glitch at the seams.
+    const kin = { ux: 0, uy: 0, v: { x: 0, y: -1 }, a: { x: 0, y: 0 }, trail: [] };
+    const V_GAIN = 0.4;  // EMA gain for velocity  (1st derivative)
+    const A_GAIN = 0.5;  // EMA gain for accel     (2nd derivative)
+
+    function kinReset(x, y, d) {
+        kin.ux = x; kin.uy = y;
+        kin.v = { x: d.x, y: d.y };
+        kin.a = { x: 0, y: 0 };
+        kin.trail = [];
+    }
+
+    function kinStep(d) {
+        kin.ux += d.x; kin.uy += d.y;
+        const nvx = kin.v.x + (d.x - kin.v.x) * V_GAIN;
+        const nvy = kin.v.y + (d.y - kin.v.y) * V_GAIN;
+        kin.a.x += ((nvx - kin.v.x) - kin.a.x) * A_GAIN;
+        kin.a.y += ((nvy - kin.v.y) - kin.a.y) * A_GAIN;
+        kin.v.x = nvx; kin.v.y = nvy;
+        kin.trail.push({ x: kin.ux, y: kin.uy });
+        if (kin.trail.length > 40) kin.trail.shift();
+    }
+
+    // Where will the head be T player-steps from now, reading `order` derivatives?
+    function predict(order, T) {
+        const hx = kin.ux, hy = kin.uy;
+        if (order === 0) return { x: hx, y: hy };
+        if (order === 1) return { x: hx + kin.v.x * T, y: hy + kin.v.y * T };
+        // order 2: integrate forward with decaying acceleration, speed capped at 1 tile/step
+        let px = hx, py = hy, vx = kin.v.x, vy = kin.v.y, ax = kin.a.x, ay = kin.a.y;
+        for (let i = 0; i < Math.ceil(T); i++) {
+            const f = Math.min(1, T - i);
+            vx += ax; vy += ay;
+            ax *= 0.85; ay *= 0.85;
+            const m = Math.hypot(vx, vy);
+            if (m > 1) { vx /= m; vy /= m; }
+            px += vx * f; py += vy * f;
+        }
+        return { x: px, y: py };
+    }
+
+    function trailCentroid() {
+        if (!kin.trail.length) return { x: kin.ux, y: kin.uy };
+        let sx = 0, sy = 0;
+        for (const p of kin.trail) { sx += p.x; sy += p.y; }
+        return { x: sx / kin.trail.length, y: sy / kin.trail.length };
+    }
+
+    const toCell = p => ({ x: wrap(Math.round(p.x)), y: wrap(Math.round(p.y)) });
+
+    // --- PATHFINDING (BFS on the torus, walls block) ---
+    const bfsDist = new Int16Array(N * N).fill(-1);
+    const bfsQueue = new Int32Array(N * N);
+
+    // Distance field outward from the target, stopping once the ghost's neighbours are known.
+    function bfsFrom(tx, ty, gx, gy) {
+        let qh = 0, qt = 0;
+        const start = idx(tx, ty), gi = idx(gx, gy);
+        bfsDist[start] = 0; bfsQueue[qt++] = start;
+        let gd = -1, budget = 6000;
+        while (qh < qt && budget-- > 0) {
+            const c = bfsQueue[qh++], cd = bfsDist[c];
+            if (gd >= 0 && cd > gd + 1) break;
+            if (c === gi) gd = cd;
+            const cx = c % N, cy = (c / N) | 0;
+            for (const d of DIRS) {
+                const ni = idx(cx + d.x, cy + d.y);
+                if (bfsDist[ni] !== -1 || walls[ni]) continue;
+                bfsDist[ni] = cd + 1;
+                bfsQueue[qt++] = ni;
+            }
+        }
+        return qt;
+    }
+    function bfsReset(qt) { for (let i = 0; i < qt; i++) bfsDist[bfsQueue[i]] = -1; }
+
+    // --- GHOSTS ---
+    const GHOST_DEFS = [
+        { name: 'BLINKY', color: '#FF0000', hunt: g => toCell(predict(0, 0)),   aimOrder: 0 },
+        { name: 'PINKY',  color: '#FFB8FF', hunt: g => toCell(predict(1, 4)),   aimOrder: 1 },
+        { name: 'INKY',   color: '#00FFFF', hunt: g => toCell(predict(2, 6)),   aimOrder: 2 },
+        { name: 'CLYDE',  color: '#FFB800', hunt: g => toCell(trailCentroid()), aimOrder: 1, late: true },
+    ];
+
+    function makeGhost(def) {
+        return {
+            ...def, x: 0, y: 0, dir: { x: 1, y: 0 },
+            state: 'hunt', t: 0, acc: 0, cool: 0,
+            target: { x: 0, y: 0 }, wp: null, locked: false, lungeLeft: 0,
+            trail: [], active: !def.late, fade: 1,
+        };
+    }
+
+    function occupied(x, y, except) {
+        return ghosts.some(o => o !== except && o.active && o.x === x && o.y === y);
+    }
+
+    function spawnFar(g) {
+        const h = snake[0];
+        for (let tries = 0; tries < 400; tries++) {
+            const x = Math.floor(Math.random() * N);
+            const y = Math.floor(Math.random() * N);
+            if (isWall(x, y) || tdist(x, y, h.x, h.y) < 20) continue;
+            if (snake.some(s => s.x === x && s.y === y) || occupied(x, y, g)) continue;
+            g.x = x; g.y = y; break;
+        }
+        g.dir = DIRS[Math.floor(Math.random() * 4)];
+        g.state = 'hunt'; g.t = 0; g.acc = 0; g.locked = false; g.trail = []; g.wp = null;
+        g.cool = 1500 + Math.random() * 2500;
+    }
+
+    function attackers() {
+        return ghosts.filter(g => g.active && (g.state === 'aim' || g.state === 'lunge')).length;
+    }
+
+    function huntStepMs() {
+        return Math.max(HUNT_STEP_MIN, HUNT_STEP_MS - score * 0.3);
+    }
+
+    // Solve for an intercept: where will the player be when my lunge can get there?
+    function interceptTarget(g, remainMs) {
+        const delay = remainMs / PLAYER_STEP_MS;          // player steps before I launch
+        const speed = PLAYER_STEP_MS / LUNGE_STEP_MS;     // my tiles per player step
+        let T = delay, cell = toCell(predict(g.aimOrder, T));
+        for (let i = 0; i < 5; i++) {
+            const d = tdist(g.x, g.y, cell.x, cell.y);
+            T = Math.min(20, delay + d / speed);
+            cell = toCell(predict(g.aimOrder, T));
+        }
+        // don't aim into a wall: back off along the predicted path
+        for (let k = T; isWall(cell.x, cell.y) && k > 0; k -= 0.5) cell = toCell(predict(g.aimOrder, k));
+        return cell;
+    }
+
+    function stepGhostTo(g, d) {
+        g.trail.unshift({ x: g.x, y: g.y });
+        if (g.trail.length > 4) g.trail.pop();
+        g.dir = d;
+        g.x = wrap(g.x + d.x);
+        g.y = wrap(g.y + d.y);
+    }
+
+    // Path toward a target around walls (or flee from the head when dazed).
+    function moveGhost(g, target, { flee = false } = {}) {
+        let qt = 0;
+        if (!flee) qt = bfsFrom(target.x, target.y, g.x, g.y);
+        const h = snake[0];
+        let best = null, bestScore = Infinity;
+        for (const d of DIRS) {
+            const nx = wrap(g.x + d.x), ny = wrap(g.y + d.y);
+            if (isWall(nx, ny) || occupied(nx, ny, g)) continue;
+            let s;
+            if (flee) s = -tdist(nx, ny, h.x, h.y);
+            else {
+                const bd = bfsDist[idx(nx, ny)];
+                s = bd >= 0 ? bd : 10000 + tdist(nx, ny, target.x, target.y);
+            }
+            if (d.x === -g.dir.x && d.y === -g.dir.y) s += 0.5; // arcade rule: avoid reversing
+            s += Math.random() * 0.1;
+            if (s < bestScore) { bestScore = s; best = d; }
+        }
+        if (qt) bfsReset(qt);
+        if (best) stepGhostTo(g, best);
+    }
+
+    function enterState(g, s) {
+        g.state = s; g.t = 0; g.acc = 0;
+        if (s === 'aim') { g.locked = false; g.target = interceptTarget(g, AIM_MS); }
+        if (s === 'lunge') { g.lungeLeft = Math.min(LUNGE_MAX, tdist(g.x, g.y, g.target.x, g.target.y) + LUNGE_OVERSHOOT); }
+        if (s === 'hunt') { g.trail = []; }
+    }
+
+    function lungeStep(g) {
+        let d = g.dir;
+        if (g.x !== g.target.x || g.y !== g.target.y) {
+            const dx = wdelta(g.x, g.target.x), dy = wdelta(g.y, g.target.y);
+            const opts = [];
+            if (dx) opts.push({ x: Math.sign(dx), y: 0, w: Math.abs(dx) });
+            if (dy) opts.push({ x: 0, y: Math.sign(dy), w: Math.abs(dy) });
+            opts.sort((a, b) => b.w - a.w);
+            d = opts.find(o => !isWall(g.x + o.x, g.y + o.y)) || opts[0];
+            d = { x: d.x, y: d.y };
+        }
+        if (isWall(g.x + d.x, g.y + d.y)) { // straight into a wall
+            addPopup(g.x, g.y, 'BONK', g.color);
+            enterState(g, 'daze');
+            return;
+        }
+        stepGhostTo(g, d);
+        g.lungeLeft--;
+
+        if (checkContacts()) return;
+
+        // Lunging into the body: ghost bonks off, tail gets severed.
+        for (let i = 1; i < snake.length; i++) {
+            if (snake[i].x === g.x && snake[i].y === g.y) {
+                if (invuln <= 0 && snake.length > 2) {
+                    const lost = snake.length - Math.max(2, i);
+                    snake.length = Math.max(2, i);
+                    if (lost > 0) addPopup(g.x, g.y, 'SNIP -' + lost, '#f66');
+                }
+                enterState(g, 'daze');
+                return;
+            }
+        }
+        if (g.lungeLeft <= 0) enterState(g, 'daze');
+    }
+
+    function updateGhost(g, dt) {
+        if (!g.active) return;
+        g.t += dt;
+        g.cool -= dt;
+        if (g.fade < 1) g.fade = Math.min(1, g.fade + dt / 800);
+
+        switch (g.state) {
+            case 'hunt': {
+                const h = snake[0];
+                const d = tdist(g.x, g.y, h.x, h.y);
+                if (d <= HUNT_RADIUS) {
+                    g.target = g.hunt(g); g.wp = null;
+                } else { // patrol: wander between random waypoints until the player is near
+                    if (!g.wp || (g.x === g.wp.x && g.y === g.wp.y) || g.t > 12000) {
+                        g.t = 0;
+                        do { g.wp = { x: wrap(g.x + Math.floor(Math.random() * 41) - 20), y: wrap(g.y + Math.floor(Math.random() * 41) - 20) }; }
+                        while (isWall(g.wp.x, g.wp.y));
+                    }
+                    g.target = g.wp;
+                }
+                g.acc += dt;
+                const step = huntStepMs();
+                if (g.acc >= step) {
+                    g.acc -= step;
+                    moveGhost(g, g.target);
+                    if (checkContacts()) return;
+                }
+                if (g.cool <= 0 && invuln <= 0 && d <= ATTACK_RANGE && attackers() < MAX_ATTACKERS) {
+                    enterState(g, 'aim');
+                }
+                break;
+            }
+            case 'aim': {
+                if (g.t < AIM_MS - LOCK_MS) {
+                    g.target = interceptTarget(g, AIM_MS - g.t);
+                } else {
+                    g.locked = true;
+                }
+                if (g.t >= AIM_MS) enterState(g, 'lunge');
+                break;
+            }
+            case 'lunge': {
+                g.acc += dt;
+                while (g.acc >= LUNGE_STEP_MS && g.state === 'lunge' && state === 'play') {
+                    g.acc -= LUNGE_STEP_MS;
+                    lungeStep(g);
+                }
+                break;
+            }
+            case 'daze': {
+                g.acc += dt;
+                if (g.acc >= DAZE_STEP_MS) {
+                    g.acc -= DAZE_STEP_MS;
+                    moveGhost(g, snake[0], { flee: true });
+                    if (checkContacts()) return;
+                }
+                if (g.t >= DAZE_MS) {
+                    enterState(g, 'hunt');
+                    g.cool = 2200 + Math.random() * 2000;
+                }
+                break;
+            }
+        }
+    }
+
+    // --- INITIALIZATION ---
+    function init() {
+        generateMap(mapSeed);
+        score = 0; lives = 3;
+        timeLeft = TIME_LIMIT_MS;
+        scoreEl.innerText = score;
+        livesEl.innerText = lives;
+        overReason = '';
+
+        ghosts = [];
+        // The seeded rng continues from map generation, so the opening layout is the same every run.
+        const start = findSpawn(Math.floor(rng() * N), Math.floor(rng() * N), N, rng);
+        placeSnake(start);
+        pelletGrid.fill(0);
+        pellets = [];
+        for (let i = 0; i < FOOD_COUNT; i++) spawnPellet(rng, 6);
+
+        ghosts = [];
+        for (let c = 0; c < GHOST_COPIES; c++) GHOST_DEFS.forEach(def => ghosts.push(makeGhost(def)));
+        ghosts.forEach(g => { if (g.active) spawnFar(g); });
+        invuln = 0; flash = 0; popups = [];
+        playerAcc = 0;
+    }
+
+    // Find an open cell with room behind (for the body) and a clear runway ahead.
+    function findSpawn(nx, ny, radius, rand = Math.random) {
+        for (let r = radius, tries = 0; tries < 2000; tries++) {
+            if (tries === 600) r = N;
+            const x = wrap(nx + Math.floor(rand() * (2 * r + 1)) - r);
+            const y = wrap(ny + Math.floor(rand() * (2 * r + 1)) - r);
+            const d = DIRS[Math.floor(rand() * 4)];
+            let ok = true;
+            for (let k = -2; k <= 8 && ok; k++) if (isWall(x + d.x * k, y + d.y * k)) ok = false;
+            if (!ok) continue;
+            if (ghosts.some(g => g.active && tdist(g.x, g.y, x, y) < 10)) continue;
+            return { x, y, d };
+        }
+        return { x: 0, y: 0, d: DIRS[0] };
+    }
+
+    function placeSnake(sp) {
+        snake = [0, 1, 2].map(k => ({ x: wrap(sp.x - sp.d.x * k), y: wrap(sp.y - sp.d.y * k) }));
+        direction = { x: sp.d.x, y: sp.d.y };
+        inputQueue = [];
+        kinReset(sp.x, sp.y, direction);
+        cam.x = sp.x; cam.y = sp.y;
+    }
+
+    function respawnNear() {
+        const h = snake[0];
+        placeSnake(findSpawn(h.x, h.y, 12));
+    }
+
+    function spawnPellet(rand = Math.random, minDist = 10) {
+        const h = snake[0];
+        for (let tries = 0; tries < 1000; tries++) {
+            const x = Math.floor(rand() * N), y = Math.floor(rand() * N);
+            const i = idx(x, y);
+            if (walls[i] || pelletGrid[i]) continue;
+            if (tdist(x, y, h.x, h.y) < minDist) continue;
+            if (snake.some(s => s.x === x && s.y === y)) continue;
+            pelletGrid[i] = 1;
+            pellets.push({ x, y });
+            return;
+        }
+    }
+
+    function addPopup(x, y, text, color) {
+        popups.push({ x, y, text, color, t: 0 });
+    }
+
+    // --- INPUT ---
+    function queueDir(d) {
+        const last = inputQueue.length ? inputQueue[inputQueue.length - 1] : direction;
+        if (d.x === -last.x && d.y === -last.y) return;
+        if (d.x === last.x && d.y === last.y) return;
+        if (inputQueue.length < 2) inputQueue.push(d);
+    }
+
+    function pressDir(d) {
+        if (state === 'ready') state = 'play';
+        if (state === 'play') queueDir(d);
+    }
+
+    function restart(newMap) {
+        if (newMap) mapSeed = newSeed();
+        init();
+        state = 'ready';
+    }
+
+    const KEYMAP = {
+        ArrowUp: DIRS[0], ArrowRight: DIRS[1], ArrowDown: DIRS[2], ArrowLeft: DIRS[3],
+        w: DIRS[0], d: DIRS[1], s: DIRS[2], a: DIRS[3],
+    };
+
+    window.addEventListener('keydown', e => {
+        const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+        if (KEYMAP[k]) { e.preventDefault(); pressDir(KEYMAP[k]); return; }
+        if (k === 'x') { showDerivs = !showDerivs; return; }
+        if (k === 'm') { showMinimap = !showMinimap; return; }
+        if (k === 'c') { crtOn = !crtOn; return; }
+        if (k === 'n' && (state === 'ready' || state === 'over' || state === 'paused')) { restart(true); return; }
+        if (k === ' ' || k === 'p') {
+            e.preventDefault();
+            if (state === 'play') state = 'paused';
+            else if (state === 'paused') state = 'play';
+            else if (state === 'over') restart(false);
+            return;
+        }
+        if (k === 'Enter' && state === 'over') restart(false);
+    });
+
+    let touchStart = null;
+    canvas.addEventListener('touchstart', e => { const t = e.touches[0]; touchStart = { x: t.clientX, y: t.clientY }; e.preventDefault(); }, { passive: false });
+    canvas.addEventListener('touchend', e => {
+        if (!touchStart) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+        touchStart = null;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) {
+            if (state === 'over') restart(false);
+            else if (state === 'play') state = 'paused';
+            else if (state === 'paused') state = 'play';
+            return;
+        }
+        if (Math.abs(dx) > Math.abs(dy)) pressDir(dx > 0 ? DIRS[1] : DIRS[3]);
+        else pressDir(dy > 0 ? DIRS[2] : DIRS[0]);
+    });
+
+    // --- CORE LOGIC ---
+
+    function stepPlayer() {
+        if (inputQueue.length) direction = inputQueue.shift();
+
+        // --- THE TOROIDAL WRAP LOGIC ---
+        const head = { x: wrap(snake[0].x + direction.x), y: wrap(snake[0].y + direction.y) };
+
+        if (isWall(head.x, head.y)) {
+            addPopup(head.x, head.y, 'CRASH', '#55f');
+            if (invuln > 0) { respawnNear(); return; } // grace period: just get put back on the road
+            loseLife();
+            return;
+        }
+
+        const hIdx = idx(head.x, head.y);
+        const eating = pelletGrid[hIdx] === 1;
+
+        // Self collision (the tail tip moves out of the way unless we're growing)
+        const n = eating ? snake.length : snake.length - 1;
+        for (let i = 0; i < n; i++) {
+            if (head.x === snake[i].x && head.y === snake[i].y) {
+                addPopup(head.x, head.y, 'OUCH', '#fa0');
+                respawnNear();
+                invuln = 1000;
+                return;
+            }
+        }
+
+        snake.unshift(head);
+        kinStep(direction);
+
+        if (eating) {
+            pelletGrid[hIdx] = 0;
+            pellets = pellets.filter(p => p.x !== head.x || p.y !== head.y);
+            score += 10;
+            scoreEl.innerText = score;
+            spawnPellet();
+            if (score >= CLYDE_SCORE) {
+                ghosts.filter(g => g.late && !g.active).forEach(g => {
+                    g.active = true; g.fade = 0;
+                    spawnFar(g);
+                    addPopup(head.x, head.y - 1, 'CLYDE JOINS', g.color);
+                });
+            }
+        } else {
+            snake.pop();
+        }
+
+        checkContacts();
+    }
+
+    // Returns true if the round was interrupted (player hit).
+    function checkContacts() {
+        const h = snake[0];
+        for (const g of ghosts) {
+            if (!g.active || g.x !== h.x || g.y !== h.y) continue;
+            if (g.state === 'daze') { eatGhost(g); continue; }
+            if (invuln <= 0) { loseLife(); return true; }
+        }
+        return false;
+    }
+
+    function eatGhost(g) {
+        score += 50;
+        scoreEl.innerText = score;
+        addPopup(g.x, g.y, '+50', '#66f');
+        spawnFar(g);
+        g.cool = 3500;
+    }
+
+    function loseLife() {
+        lives--;
+        livesEl.innerText = lives;
+        flash = 1;
+        if (lives <= 0) { endGame('OUT OF LIVES'); return; }
+        // The world persists: respawn near where you fell, and back off anyone mid-attack.
+        respawnNear();
+        invuln = INVULN_MS;
+        const h = snake[0];
+        ghosts.forEach(g => {
+            if (!g.active) return;
+            if (g.state === 'aim' || g.state === 'lunge') { enterState(g, 'hunt'); g.cool = 3000; }
+            if (tdist(g.x, g.y, h.x, h.y) < 8) spawnFar(g);
+        });
+    }
+
+    function endGame(reason) {
+        state = 'over';
+        overReason = reason;
+        if (score > hi) {
+            hi = score; hiEl.innerText = hi;
+            try { localStorage.setItem('snakeman-hi', hi); } catch (e) {}
+        }
+    }
+
+    function update(dt) {
+        timeLeft -= dt;
+        if (timeLeft <= 0) { timeLeft = 0; endGame('TIME UP'); return; }
+
+        playerAcc += dt;
+        while (playerAcc >= PLAYER_STEP_MS) {
+            playerAcc -= PLAYER_STEP_MS;
+            stepPlayer();
+            if (state !== 'play') return;
+        }
+        for (const g of ghosts) {
+            updateGhost(g, dt);
+            if (state !== 'play') return;
+        }
+        invuln = Math.max(0, invuln - dt);
+    }
+
+    // --- RENDERING (camera follows the head; everything is drawn relative to it) ---
+    //
+    // Everything is pixel art on a sub-pixel grid: each 20px tile is 10x10 "sub-pixels" of 2px.
+    // Sprites are composed once, sub-pixel by sub-pixel, into small cached canvases with a
+    // highlight / base / shadow ramp and ordered dithering between tones. The scene is drawn to
+    // an offscreen canvas, then presented through a CRT pass (bloom, scanlines, vignette).
+
+    const P = 2;                       // sub-pixel size in screen px
+    const S = GRID_SIZE / P;           // sprite size in sub-pixels (10)
+    const snap = v => Math.round(v / P) * P;
+    const FONT = "'Press Start 2P', 'Courier New', monospace";
+    let crtOn = true;
+
+    const sx = x => W / 2 + wdeltaF(cam.x, x) * GRID_SIZE;   // screen center of world column x
+    const sy = y => W / 2 + wdeltaF(cam.y, y) * GRID_SIZE;
+    const onScreen = (x, y) => Math.abs(wdeltaF(cam.x, x)) < VIEW / 2 + 2 && Math.abs(wdeltaF(cam.y, y)) < VIEW / 2 + 2;
+
+    // --- colour + dithering helpers ---
+    function hexToRgb(h) {
+        h = h.replace('#', '');
+        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+        const n = parseInt(h, 16);
+        return [n >> 16 & 255, n >> 8 & 255, n & 255];
+    }
+    const rgbStr = ([r, g, b]) => `rgb(${r | 0},${g | 0},${b | 0})`;
+    const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+    // Two-tone ramp: a highlight and a shadow around the base colour.
+    function tones(base) {
+        const c = typeof base === 'string' ? hexToRgb(base) : base;
+        return {
+            hi: rgbStr(mix(c, [255, 255, 255], 0.45)),
+            base: rgbStr(c),
+            lo: rgbStr(mix(c, [0, 0, 40], 0.45)),
+            spec: rgbStr(mix(c, [255, 255, 255], 0.85)),
+        };
+    }
+    const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]].map(r => r.map(v => (v + 0.5) / 16));
+    const dither = (i, j, t) => t > BAYER[j & 3][i & 3];
+
+    // Light comes from the top-left. L in ~[-1, 1]; dither across the band edges.
+    function litTone(t, i, j, L) {
+        if (L > 0.55) return t.hi;
+        if (L > 0.2) return dither(i, j, (L - 0.2) / 0.35) ? t.hi : t.base;
+        if (L > -0.2) return t.base;
+        if (L > -0.55) return dither(i, j, (-0.2 - L) / 0.35) ? t.lo : t.base;
+        return t.lo;
+    }
+
+    // Compose a sprite one sub-pixel at a time. fn(i, j) returns a colour or null.
+    function makeSprite(fn, size = S) {
+        const c = document.createElement('canvas');
+        c.width = c.height = size * P;
+        const x = c.getContext('2d');
+        for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
+            const col = fn(i, j);
+            if (col) { x.fillStyle = col; x.fillRect(i * P, j * P, P, P); }
+        }
+        return c;
+    }
+    const spriteCache = new Map();
+    function cached(key, build) {
+        let s = spriteCache.get(key);
+        if (!s) { s = build(); spriteCache.set(key, s); }
+        return s;
+    }
+
+    // --- sprites ---
+    function pacSprite(di, frame) {
+        return cached('pac' + di + frame, () => {
+            const t = tones('#FFD700');
+            const d = DIRS[di];
+            const fa = Math.atan2(d.y, d.x);
+            const mouth = [0.12, 0.45, 0.8][frame];
+            const perp = d.x !== 0 ? { x: 0, y: -1 } : { x: -1, y: 0 };
+            const ex = Math.round(4.5 + d.x * 0.6 + perp.x * 2.4 - 0.5), ey = Math.round(4.5 + d.y * 0.6 + perp.y * 2.4 - 0.5);
+            return makeSprite((i, j) => {
+                const dx = i - 4.5, dy = j - 4.5, r = Math.hypot(dx, dy);
+                if (r > 4.95) return null;
+                let a = Math.atan2(dy, dx) - fa;
+                a = Math.atan2(Math.sin(a), Math.cos(a));
+                if (Math.abs(a) < mouth && r > 0.8) return null;
+                if (i === ex && j === ey) return '#2a1400';                   // eye
+                if (i === ex && j === ey - 1) return t.lo;                     // brow shadow
+                const L = -(dx * 0.7 + dy * 0.7) / 4.5;
+                if (i === 2 && j === 2) return t.spec;                         // specular glint
+                if (r > 4.1 && L < 0.1) return t.lo;                           // rim shadow
+                return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    const GHOST_EYES = [{ x: 2, y: 3 }, { x: 6, y: 3 }];
+    // look: 0-3 = DIRS index, 4 = straight ahead. mode: normal | daze | flash
+    function ghostSprite(color, frame, look, mode) {
+        return cached(`g${color}${frame}${look}${mode}`, () => {
+            const body = mode === 'daze' ? '#2233ff' : mode === 'flash' ? '#e8e8f0' : color;
+            const t = tones(body);
+            const feature = mode === 'flash' ? '#ff3030' : '#ffc0b0';
+            const lk = look < 4 ? DIRS[look] : { x: 0, y: 0 };
+            return makeSprite((i, j) => {
+                // silhouette: dome + body + animated skirt teeth
+                let inside;
+                if (j < 5) inside = Math.hypot(i - 4.5, j - 4.8) <= 4.9;
+                else if (j < 9) inside = true;
+                else inside = (i + frame) % 3 !== 2;
+                if (!inside) return null;
+
+                if (mode === 'normal') {
+                    for (const e of GHOST_EYES) {
+                        const ei = i - e.x, ej = j - e.y;
+                        if (ei < 0 || ei > 1 || ej < 0 || ej > 2) continue;
+                        const pi = lk.x < 0 ? 0 : lk.x > 0 ? 1 : (e.x < 4 ? 1 : 0);
+                        const pj = lk.y < 0 ? 0 : lk.y > 0 ? 2 : 1;
+                        if (ei === pi && ej === pj) return '#1a2cff';        // pupil
+                        return ej === 2 ? '#b8b8d8' : '#ffffff';              // two-tone eye white
+                    }
+                } else {
+                    if ((i === 3 || i === 6) && j === 3) return feature;       // beady eyes
+                    if (j === 6 || j === 7) {                                  // wobbly mouth
+                        if (i >= 1 && i <= 8 && (i % 2 === 0 ? j === 6 : j === 7)) return feature;
+                    }
+                }
+                if (i === 2 && j === 1) return t.spec;
+                const L = -(((i - 4.5) / 4.5) * 0.8 + ((j - 4.5) / 4.5) * 0.45);
+                if (i === 9 || (j === 9) || (j >= 5 && i === 8 && dither(i, j, 0.5))) return t.lo;
+                return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    const BODY_HEAD = hexToRgb('#FFB000'), BODY_TAIL = hexToRgb('#8a3a00');
+    function bodySprite(k) { // k: 0 (near head) .. 7 (tail tip)
+        return cached('body' + k, () => {
+            const t = tones(mix(BODY_HEAD, BODY_TAIL, k / 7));
+            return makeSprite((i, j) => {
+                if ((i === 0 || i === 9) && (j === 0 || j === 9)) return null;   // rounded corners
+                if (j === 0 || i === 0) return t.hi;                              // lit edge
+                if (j === 9 || i === 9) return t.lo;                              // shadow edge
+                // one raised diamond scale per segment
+                const d = Math.abs(i - 4.5) + Math.abs(j - 4.5);
+                const L = -((i - 4.5) * 0.7 + (j - 4.5) * 0.7) / 4.5;
+                if (d <= 3) return (i === 4 && j === 2) ? t.spec : litTone(t, i, j, L * 1.4 + 0.1);
+                if (d <= 4) return L > 0.3 ? t.base : t.lo;                      // scale outline
+                return dither(i, j, 0.5 - L) ? t.lo : t.base;
+            });
+        });
+    }
+
+    function pelletSprite(frame) {
+        return cached('pellet' + frame, () => {
+            const t = tones('#FFEE00');
+            const r = frame ? 2.9 : 2.4;
+            return makeSprite((i, j) => {
+                const dx = i - 4.5, dy = j - 4.5, d = Math.hypot(dx, dy);
+                if (d > r) return null;
+                if (i === 4 && j === 3) return '#ffffff';
+                const L = -(dx * 0.7 + dy * 0.7) / r;
+                return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    // Wall tile keyed by which neighbours are also wall (1=up 2=right 4=down 8=left).
+    function wallSprite(mask) {
+        return cached('wall' + mask, () => makeSprite((i, j) => {
+            const oU = !(mask & 1), oR = !(mask & 2), oD = !(mask & 4), oL = !(mask & 8);
+            if ((oU && j === 0) || (oL && i === 0)) return '#9a9aff';        // lit rim
+            if ((oD && j === 9) || (oR && i === 9)) return '#2626b8';        // shadow rim
+            if ((oU && j === 1) || (oL && i === 1)) return '#5050f0';
+            if ((oD && j === 8) || (oR && i === 8)) return '#1c1c88';
+            return (i % 2 === 0 && j % 2 === 0) ? '#1c1c70' : '#0c0c3a';     // 2x2-dithered fill
+        }));
+    }
+
+    // --- pixel primitives ---
+    function pixelLine(x0, y0, x1, y1, color, every = 1) {
+        const len = Math.hypot(x1 - x0, y1 - y0);
+        const n = Math.max(1, Math.round(len / P));
+        ctx.fillStyle = color;
+        for (let k = 0; k <= n; k += every) {
+            const t = k / n;
+            ctx.fillRect(snap(x0 + (x1 - x0) * t) - P / 2, snap(y0 + (y1 - y0) * t) - P / 2, P, P);
+        }
+    }
+    function pixelArrow(x, y, dx, dy, color) {
+        const len = Math.hypot(dx, dy);
+        if (len < 4) return;
+        pixelLine(x, y, x + dx, y + dy, color);
+        const ang = Math.atan2(dy, dx);
+        for (const s of [-0.6, 0.6]) {
+            pixelLine(x + dx, y + dy, x + dx - 8 * Math.cos(ang + s), y + dy - 8 * Math.sin(ang + s), color);
+        }
+    }
+    function pixelRing(cx, cy, r, color) {
+        ctx.fillStyle = color;
+        const n = Math.max(10, Math.round(r * 1.1));
+        for (let k = 0; k < n; k++) {
+            const a = k / n * Math.PI * 2;
+            ctx.fillRect(snap(cx + Math.cos(a) * r) - P / 2, snap(cy + Math.sin(a) * r) - P / 2, P, P);
+        }
+    }
+    // Text with a hard two-tone drop shadow.
+    function pixelText(text, x, y, size, color, shadow = '#000') {
+        ctx.font = `${size}px ${FONT}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = shadow;
+        ctx.fillText(text, snap(x) + P, snap(y) + P);
+        ctx.fillStyle = color;
+        ctx.fillText(text, snap(x), snap(y));
+    }
+
+    function drawTiles() {
+        const bx = Math.floor(cam.x), by = Math.floor(cam.y);
+        const half = VIEW / 2 + 2;
+        const g = GRID_SIZE;
+        ctx.fillStyle = '#1a1a1a';
+        for (let j = -half; j <= half; j++) {
+            for (let i = -half; i <= half; i++) {
+                const wx = bx + i, wy = by + j;
+                const left = snap(W / 2 + (wx - cam.x) * g - g / 2);
+                const top = snap(W / 2 + (wy - cam.y) * g - g / 2);
+                if (!isWall(wx, wy)) {
+                    ctx.fillRect(left, top, P, P);   // faint floor stud at each tile corner
+                    continue;
+                }
+                const mask = (isWall(wx, wy - 1) ? 1 : 0) | (isWall(wx + 1, wy) ? 2 : 0) | (isWall(wx, wy + 1) ? 4 : 0) | (isWall(wx - 1, wy) ? 8 : 0);
+                ctx.drawImage(wallSprite(mask), left, top);
+                ctx.fillStyle = '#1a1a1a';
+            }
+        }
+    }
+
+    const lookIndex = (dx, dy) => {
+        if (!dx && !dy) return 4;
+        return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+    };
+
+    function drawGhost(g, now) {
+        if (!onScreen(g.x, g.y)) return;
+        const s = GRID_SIZE;
+        let x = sx(g.x) - s / 2, y = sy(g.y) - s / 2;
+        if (g.state === 'aim') { // trembling wind-up
+            const amp = g.locked ? 2 : 1;
+            x += Math.round((Math.random() - 0.5) * 2 * amp) * P; y += Math.round((Math.random() - 0.5) * 2 * amp) * P;
+        }
+        const frame = Math.floor(now / 150) % 2;
+        let mode = 'normal';
+        if (g.state === 'daze') mode = (g.t > DAZE_MS - 500 && Math.floor(now / 100) % 2) ? 'flash' : 'daze';
+        let look = lookIndex(g.dir.x, g.dir.y);
+        if (g.state === 'aim') look = lookIndex(wdelta(g.x, g.target.x), wdelta(g.y, g.target.y));
+
+        // lunge afterimages
+        if (g.state === 'lunge') {
+            g.trail.forEach((p, i) => {
+                ctx.globalAlpha = g.fade * (0.4 - i * 0.09);
+                ctx.drawImage(ghostSprite(g.color, frame, look, mode), snap(sx(p.x) - s / 2), snap(sy(p.y) - s / 2));
+            });
+        }
+        ctx.globalAlpha = g.fade;
+        ctx.drawImage(ghostSprite(g.color, frame, look, mode), snap(x), snap(y));
+        ctx.globalAlpha = 1;
+        if (g.state === 'aim' && g.locked) pixelText('!', x + s / 2, y - 3, 10, '#fff', g.color);
+    }
+
+    function drawAim(g, now) {
+        const fx = sx(g.x), fy = sy(g.y);
+        const tx = fx + wdelta(g.x, g.target.x) * GRID_SIZE, ty = fy + wdelta(g.y, g.target.y) * GRID_SIZE;
+        const progress = Math.min(1, g.t / AIM_MS);
+
+        ctx.save();
+        ctx.globalAlpha = g.locked ? 0.9 : 0.35 + 0.35 * progress;
+        pixelLine(fx, fy, tx, ty, g.color, g.locked ? 1 : 3);
+
+        // reticle
+        const r = g.locked ? GRID_SIZE * 0.7 : GRID_SIZE * (1.5 - 0.8 * progress) + Math.sin(now / 60) * 1.5;
+        ctx.globalAlpha = g.locked ? 1 : 0.75;
+        pixelRing(tx, ty, r, g.color);
+        for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            pixelLine(tx + ux * (r - 4), ty + uy * (r - 4), tx + ux * (r + 4), ty + uy * (r + 4), g.color);
+        }
+        if (g.locked) { // dithered, pulsing target cell
+            const on = Math.floor(now / 70) % 2;
+            ctx.fillStyle = g.color;
+            ctx.globalAlpha = 0.55;
+            const L = snap(tx - GRID_SIZE / 2), T = snap(ty - GRID_SIZE / 2);
+            for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+                if ((i + j + on) % 2 === 0) ctx.fillRect(L + i * P, T + j * P, P, P);
+            }
+        }
+        ctx.restore();
+    }
+
+    function drawDerivatives() {
+        const hx = sx(snake[0].x), hy = sy(snake[0].y);
+        // INKY's read of you: the 2nd-order predicted path
+        ctx.save();
+        ctx.fillStyle = '#f0f';
+        for (let T = 1; T <= 10; T++) {
+            const p = predict(2, T);
+            ctx.globalAlpha = 0.45 * (1 - T / 12);
+            ctx.fillRect(snap(hx + (p.x - kin.ux) * GRID_SIZE) - P / 2, snap(hy + (p.y - kin.uy) * GRID_SIZE) - P / 2, P, P);
+        }
+        ctx.globalAlpha = 0.8;
+        pixelArrow(hx, hy, kin.v.x * GRID_SIZE * 3, kin.v.y * GRID_SIZE * 3, '#0ff');
+        pixelArrow(hx, hy, kin.a.x * GRID_SIZE * 10, kin.a.y * GRID_SIZE * 10, '#f0f');
+        ctx.restore();
+    }
+
+    function drawSnake(now) {
+        const blink = invuln > 0 && Math.floor(now / 80) % 2;
+        ctx.globalAlpha = blink ? 0.3 : 1;
+        const g = GRID_SIZE;
+
+        for (let i = snake.length - 1; i >= 1; i--) {
+            const part = snake[i];
+            const k = Math.min(7, Math.floor((i / snake.length) * 8));
+            ctx.drawImage(bodySprite(k), snap(sx(part.x) - g / 2), snap(sy(part.y) - g / 2));
+        }
+
+        // head: the "Pac" in Snake-Man, chomping in the direction of travel
+        const di = DIRS.findIndex(d => d.x === direction.x && d.y === direction.y);
+        const frame = state === 'play' ? [0, 1, 2, 1][Math.floor(now / 60) % 4] : 1;
+        ctx.drawImage(pacSprite(di, frame), snap(sx(snake[0].x) - g / 2), snap(sy(snake[0].y) - g / 2));
+        ctx.globalAlpha = 1;
+    }
+
+    function drawMinimap(now) {
+        const size = minimap.width, ox = W - size - 8, oy = 8, s = MM_SCALE;
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        ctx.drawImage(minimap, ox, oy);
+        ctx.beginPath(); ctx.rect(ox, oy, size, size); ctx.clip();
+        ctx.fillStyle = '#ff0';
+        pellets.forEach(p => ctx.fillRect(ox + p.x * s - 0.5, oy + p.y * s - 0.5, 2.5, 2.5));
+        ghosts.forEach(gh => {
+            if (!gh.active) return;
+            ctx.fillStyle = gh.state === 'daze' ? '#44f' : gh.color;
+            ctx.fillRect(ox + gh.x * s - 1, oy + gh.y * s - 1, 3.5, 3.5);
+        });
+        // viewport box (drawn wrapped)
+        ctx.strokeStyle = 'rgba(0,255,0,0.6)';
+        ctx.lineWidth = 1;
+        const vx = ox + (cam.x - VIEW / 2) * s, vy = oy + (cam.y - VIEW / 2) * s;
+        for (const dx of [-N * s, 0, N * s]) for (const dy of [-N * s, 0, N * s]) ctx.strokeRect(vx + dx, vy + dy, VIEW * s, VIEW * s);
+        if (Math.floor(now / 200) % 2 || state !== 'play') {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(ox + snake[0].x * s - 1.5, oy + snake[0].y * s - 1.5, 4.5, 4.5);
+        }
+        ctx.restore();
+        ctx.fillStyle = '#333';
+        ctx.fillRect(ox - 2, oy - 2, size + 4, 2); ctx.fillRect(ox - 2, oy + size, size + 4, 2);
+        ctx.fillRect(ox - 2, oy, 2, size); ctx.fillRect(ox + size, oy, 2, size);
+    }
+
+    function drawOverlay(lines) {
+        // dithered darkening instead of a flat wash
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, W, canvas.height);
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        for (let y = 0; y < canvas.height; y += P * 2) ctx.fillRect(0, y, W, P);
+        lines.forEach(([text, size, color], i) => {
+            pixelText(text, W / 2, canvas.height / 2 - 56 + i * 36, size, color, i === 0 ? '#401010' : '#000');
+        });
+    }
+
+    // --- CRT PASS ---
+    const bloomA = document.createElement('canvas'); bloomA.width = bloomA.height = W / 4;
+    const bloomB = document.createElement('canvas'); bloomB.width = bloomB.height = W / 10;
+    const bctxA = bloomA.getContext('2d'), bctxB = bloomB.getContext('2d');
+    const crtOverlay = document.createElement('canvas');
+    crtOverlay.width = W; crtOverlay.height = canvas.height;
+    (() => {
+        const o = crtOverlay.getContext('2d');
+        // scanlines: darken the lower half of every sub-pixel row
+        o.fillStyle = 'rgba(0,0,0,0.28)';
+        for (let y = 1; y < crtOverlay.height; y += P) o.fillRect(0, y, W, 1);
+        // faint aperture-grille tint
+        const tints = ['rgba(255,0,0,0.035)', 'rgba(0,255,0,0.035)', 'rgba(0,0,255,0.035)'];
+        for (let x = 0; x < W; x++) { o.fillStyle = tints[x % 3]; o.fillRect(x, 0, 1, crtOverlay.height); }
+        // vignette
+        const v = o.createRadialGradient(W / 2, W / 2, W * 0.3, W / 2, W / 2, W * 0.75);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.45)');
+        o.fillStyle = v;
+        o.fillRect(0, 0, W, crtOverlay.height);
+    })();
+
+    function present(now) {
+        dctx.globalCompositeOperation = 'source-over';
+        dctx.globalAlpha = 1;
+        dctx.imageSmoothingEnabled = false;
+        dctx.drawImage(scene, 0, 0);
+        if (!crtOn) return;
+
+        // bloom: downsample twice (cheap blur), add back on top
+        bctxA.imageSmoothingEnabled = bctxB.imageSmoothingEnabled = true;
+        bctxA.clearRect(0, 0, bloomA.width, bloomA.height);
+        bctxA.drawImage(scene, 0, 0, bloomA.width, bloomA.height);
+        bctxB.clearRect(0, 0, bloomB.width, bloomB.height);
+        bctxB.drawImage(bloomA, 0, 0, bloomB.width, bloomB.height);
+        dctx.imageSmoothingEnabled = true;
+        dctx.globalCompositeOperation = 'lighter';
+        dctx.globalAlpha = 0.28;
+        dctx.drawImage(bloomA, 0, 0, W, canvas.height);
+        dctx.globalAlpha = 0.32;
+        dctx.drawImage(bloomB, 0, 0, W, canvas.height);
+
+        dctx.globalCompositeOperation = 'source-over';
+        dctx.globalAlpha = 1;
+        dctx.drawImage(crtOverlay, 0, 0);
+        // a whisper of flicker and a slow rolling bar
+        const barY = (now / 12) % (canvas.height + 120) - 60;
+        dctx.fillStyle = 'rgba(255,255,255,0.025)';
+        dctx.fillRect(0, barY, W, 60);
+        dctx.fillStyle = `rgba(0,0,0,${0.02 + Math.random() * 0.025})`;
+        dctx.fillRect(0, 0, W, canvas.height);
+    }
+
+    const fmtTime = ms => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+
+    function draw(now, dt) {
+        // camera eases toward the head
+        const k = 1 - Math.exp(-dt / 90);
+        cam.x = wrap(cam.x + wdeltaF(cam.x, snake[0].x) * k);
+        cam.y = wrap(cam.y + wdeltaF(cam.y, snake[0].y) * k);
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, W, canvas.height);
+        drawTiles();
+
+        // Food (pulsing pellets)
+        const pf = Math.floor(now / 220) % 2;
+        pellets.forEach(p => {
+            if (!onScreen(p.x, p.y)) return;
+            ctx.drawImage(pelletSprite(pf), snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2));
+        });
+
+        // Attack telegraphs under everything else
+        ghosts.forEach(g => { if (g.active && g.state === 'aim') drawAim(g, now); });
+
+        if (showDerivs && state !== 'over') drawDerivatives();
+        drawSnake(now);
+        ghosts.forEach(g => { if (g.active) drawGhost(g, now); });
+
+        // Popups
+        popups = popups.filter(p => (p.t += dt) < 900);
+        popups.forEach(p => {
+            ctx.globalAlpha = 1 - p.t / 900;
+            pixelText(p.text, sx(p.x), sy(p.y) - GRID_SIZE / 2 - p.t / 30, 10, p.color);
+        });
+        ctx.globalAlpha = 1;
+
+        if (showMinimap) drawMinimap(now);
+
+        // Hit flash
+        if (flash > 0) {
+            ctx.fillStyle = `rgba(255,0,0,${flash * 0.35})`;
+            ctx.fillRect(0, 0, W, canvas.height);
+            flash = Math.max(0, flash - dt / 400);
+        }
+
+        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], ['PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], ['N: NEW MAP   C: CRT', 10, '#777']]);
+        if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], ['SPACE TO RESUME', 12, '#999']]);
+        if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'], ['ENTER/SPACE: SAME MAP', 10, '#999'], ['N: NEW MAP', 10, '#999']]);
+
+        present(now);
+
+        timeEl.innerText = fmtTime(timeLeft);
+        timeEl.className = timeLeft <= 30000 ? 'low' : '';
+        const f = n => (n >= 0 ? ' ' : '−') + Math.abs(n).toFixed(2);
+        kinEl.innerHTML = `<span class="v">ẋ (${f(kin.v.x)},${f(kin.v.y)})</span> &nbsp; <span class="a">ẍ (${f(kin.a.x)},${f(kin.a.y)})</span>`;
+    }
+
+    let last = performance.now();
+    function loop(now) {
+        const dt = Math.min(100, now - last);
+        last = now;
+        if (state === 'play') update(dt);
+        draw(now, dt);
+        requestAnimationFrame(loop);
+    }
+
+    mapSeed = loadSeed();
+    init();
+    requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>

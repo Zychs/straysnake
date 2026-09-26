@@ -119,6 +119,7 @@
     const W = canvas.width;
     const VIEW = W / GRID_SIZE;   // 30x30 tiles visible
     const TILE_COUNT = 90;        // the world is 90x90 tiles and wraps on both axes
+    const MIN_CORRIDOR = 3;       // narrowest gap between walls, in tiles (room to juke a lunge)
 
     const TIME_LIMIT_MS  = 5 * 60 * 1000;
     const FOOD_COUNT     = 45;
@@ -197,18 +198,19 @@
                     const c = []; for (let i = 0; i < a; i++) c.push([i * sx, 0]); for (let j = 1; j < b; j++) c.push([(a - 1) * sx, j * sy]); return c; },
             () => { const w = ri(2, 4), h = ri(2, 3); const c = []; for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) c.push([i, j]); return c; }, // block
             () => { const r = ri(1, 3); const c = [[0, 0]]; for (let i = 1; i <= r; i++) c.push([i, 0], [-i, 0], [0, i], [0, -i]); return c; },           // plus
-            () => { const w = ri(4, 8), h = ri(2, 4), flip = rng() < .5 ? 1 : -1;                                // U bracket
+            () => { const w = ri(MIN_CORRIDOR + 2, MIN_CORRIDOR + 6), h = ri(2, 4), flip = rng() < .5 ? 1 : -1; // U bracket (inside is a corridor too)
                     const c = []; for (let i = 0; i < w; i++) c.push([i, 0]); for (let j = 1; j < h; j++) c.push([0, j * flip], [w - 1, j * flip]); return c; },
         ];
-        // Pieces never touch each other (2-tile gap), so every corridor is at least 2 wide
-        // and nothing can seal off a pocket.
+        // Pieces never come within MIN_CORRIDOR tiles of each other, so every corridor is at
+        // least that wide and nothing can seal off a pocket.
+        const gap = MIN_CORRIDOR;
         let placed = 0;
-        for (let attempt = 0; attempt < 4000 && placed < 170; attempt++) {
+        for (let attempt = 0; attempt < 6000 && placed < 170; attempt++) {
             const ox = ri(0, N - 1), oy = ri(0, N - 1);
             const cells = shapes[ri(0, shapes.length - 1)]().map(([dx, dy]) => [ox + dx, oy + dy]);
             let ok = true;
             for (const [cx, cy] of cells) {
-                for (let dx = -2; dx <= 2 && ok; dx++) for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -gap; dx <= gap && ok; dx++) for (let dy = -gap; dy <= gap; dy++) {
                     if (isWall(cx + dx, cy + dy)) { ok = false; break; }
                 }
                 if (!ok) break;

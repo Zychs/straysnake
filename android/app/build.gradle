@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+def webOut = layout.buildDirectory.dir('generated/web')
+
+android {
+    namespace 'com.zychs.snakeman'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.zychs.snakeman'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '0.1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += webOut.get().asFile
+        }
+    }
+}
+
+// The game is the repo's single HTML file: copy it in as the app's index page at build time,
+// so there is only ever one copy of it in the repo.
+def copyWeb = tasks.register('copyWeb', Copy) {
+    from(rootProject.file('../snake-man.html')) {
+        rename { 'index.html' }
+    }
+    into webOut
+}
+tasks.named('preBuild') { dependsOn copyWeb }

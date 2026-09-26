@@ -12,7 +12,7 @@
         G.overReason = '';
         G.ghosts = [];
         G.invuln = 0; G.flash = 0; G.prism = 0; G.prismChain = 0;
-        SM.fx.clear(); SM.coat.reset(); SM.dash.reset(); SM.heal.reset();
+        SM.fx.clear(); SM.anim.reset(); SM.coat.reset(); SM.dash.reset(); SM.heal.reset();
 
         // The seeded rng continues from map generation, so the opening layout is the same every run.
         // You start in a plaza, fenced into the highway block around it.
@@ -57,6 +57,7 @@
         SM.heal.update(dt);
         SM.pellets.update(dt);
         SM.ghosts.direct(dt);
+        SM.anim.tick(dt);
         SM.fx.update(dt);
     }
 

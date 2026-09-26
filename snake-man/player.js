@@ -176,7 +176,8 @@
     function update(dt) {
         if (SM.dash.busy) { acc = 0; SM.dash.update(dt); return G.mode === 'play'; }
         acc += dt;
-        for (let s = D.playerStepMs(); acc >= s; s = D.playerStepMs()) {
+        const stepMs = () => D.playerStepMs() * SM.anim.drag();   // a sighting shock staggers you
+        for (let s = stepMs(); acc >= s; s = stepMs()) {
             acc -= s;
             step();
             if (G.mode !== 'play') return false;

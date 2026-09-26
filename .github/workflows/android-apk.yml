@@ -1,10 +1,11 @@
 name: Android APK
 
-# Builds the Snake-Man Android app (a WebView around snake-man.html) and uploads a debug APK.
+# Builds the Snake-Man Android app (a WebView around snake-man.html and its modules) and uploads a debug APK.
 on:
   push:
     paths:
       - 'snake-man.html'
+      - 'snake-man/**'
       - 'android/**'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:

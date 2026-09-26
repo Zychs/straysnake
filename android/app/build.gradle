@@ -28,11 +28,15 @@ android {
     }
 }
 
-// The game is the repo's single HTML file: copy it in as the app's index page at build time,
-// so there is only ever one copy of it in the repo.
+// The game is the repo's snake-man.html plus its modules in snake-man/: copy them in at build
+// time (the page as the app's index), so there is only ever one copy of the game in the repo.
 def copyWeb = tasks.register('copyWeb', Copy) {
     from(rootProject.file('../snake-man.html')) {
         rename { 'index.html' }
+    }
+    from(rootProject.file('../snake-man')) {
+        include '*.js'
+        into 'snake-man'
     }
     into webOut
 }

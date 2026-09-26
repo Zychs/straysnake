@@ -78,33 +78,37 @@
         }
         .legend b { font-weight: normal; }
         .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px 5px 2px 2px; margin-right: 6px; }
-        /* Touch pad: a joystick and two buttons, shown only in touch mode (html.touch: phones,
-           the Android app, or ?pad=1). */
-        .pad { display: none; }
-        html.touch body { justify-content: flex-start; padding-top: max(10px, env(safe-area-inset-top)); user-select: none; -webkit-user-select: none; }
+        /* Touch and controller play. html.touch: phones, the Android app, or ?pad=1. Touch steering
+           is an Archero-style floating joystick that appears wherever your thumb lands (#touchzone
+           covers the screen; the buttons sit above it). html.gamepad: a controller is in use, so
+           the buttons give way to a legend of controller buttons. */
+        .pad, .padhelp, #touchzone { display: none; }
+        html.touch body { justify-content: flex-start; padding-top: max(10px, env(safe-area-inset-top)); user-select: none; -webkit-user-select: none; overflow: hidden; }
         html.touch .stats { font-size: 11px; gap: 4px 16px; margin-bottom: 8px; }
         html.touch .kin, html.touch .help { display: none; }
-        html.touch .pad {
-            display: flex; align-items: center; justify-content: space-between;
-            width: min(600px, 92vw); margin-top: 18px; touch-action: none;
+        html.touch .pad { display: flex; justify-content: center; margin-top: 16px; position: relative; z-index: 10; }
+        html.touch #touchzone { display: block; position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 5; touch-action: none; }
+        html.gamepad .pad { display: none; }
+        html.gamepad .padhelp { display: grid; }
+        .fstick {
+            position: absolute; width: 130px; height: 130px; margin: -65px 0 0 -65px; border-radius: 50%;
+            border: 3px solid rgba(60, 200, 60, 0.45); pointer-events: none; opacity: 0; transition: opacity .12s;
+            background: radial-gradient(circle, rgba(16, 40, 16, 0.55) 0%, rgba(7, 15, 7, 0.25) 70%);
         }
-        .stick {
-            position: relative; width: 150px; height: 150px; border-radius: 50%;
-            border: 3px solid #1c4a1c; box-shadow: inset 0 0 24px #000, 0 0 16px rgba(0,255,0,0.12);
-            background: radial-gradient(circle, #102810 0%, #070f07 70%); touch-action: none;
-        }
-        .stick::before, .stick::after {   /* faint 4-way cross: the snake only turns on the grid */
-            content: ''; position: absolute; left: 50%; top: 50%; background: #1c4a1c;
-        }
-        .stick::before { width: 70%; height: 3px; transform: translate(-50%, -50%); }
-        .stick::after { width: 3px; height: 70%; transform: translate(-50%, -50%); }
-        .knob {
-            position: absolute; left: 50%; top: 50%; width: 62px; height: 62px; margin: -31px 0 0 -31px;
-            border-radius: 50%; z-index: 1; pointer-events: none;
+        .fstick.on { opacity: 1; }
+        .fknob {
+            position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
             background: radial-gradient(circle at 35% 35%, #fff6a0, #ffd700 45%, #9a6a00);
-            box-shadow: 0 3px 0 #4a3000, 0 0 12px rgba(255,215,0,0.35);
+            box-shadow: 0 3px 0 #4a3000, 0 0 12px rgba(255, 215, 0, 0.35);
         }
-        .btns { display: flex; flex-direction: column; gap: 14px; }
+        .padhelp {
+            font-family: 'Press Start 2P', 'Courier New', monospace; font-size: 10px; line-height: 2.2;
+            color: #7a7; margin-top: 12px;
+            grid-template-columns: max-content max-content; column-gap: 1.2em; align-content: start;
+        }
+        .padhelp div { display: contents; }   /* each row's button + action fill the two columns */
+        .padhelp b { color: #ffd700; font-weight: normal; }
+        .btns { display: flex; gap: 14px; }
         .btns button {
             width: 86px; height: 58px; border-radius: 14px; background: #0c0c14; touch-action: none;
             font-family: 'Press Start 2P', 'Courier New', monospace; font-size: 11px; color: #0f0;
@@ -113,6 +117,24 @@
         .btns button:active, .btns button.on { transform: translateY(3px); box-shadow: 0 1px 0 #000; }
         #btnCoat { color: #b89cff; border-color: #4a3a80; }
         #btnCoat.cool { color: #555; border-color: #2a2a2a; }
+
+        /* Landscape (the Android app, the AYN Thor): the board fills the height on the left, and
+           score, stats and controls stack in a panel on the right. */
+        @media (orientation: landscape) {
+            html.touch body {
+                display: grid; grid-template-columns: auto minmax(170px, 280px); grid-template-rows: auto auto 1fr;
+                column-gap: 3vw; justify-content: center; align-content: start; height: 100vh;
+                padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+            }
+            html.touch canvas { grid-column: 1; grid-row: 1 / span 3; width: auto; height: calc(100vh - 28px); }
+            html.touch .stats {
+                grid-column: 2; grid-row: 1; flex-direction: column; align-items: flex-start;
+                font-size: clamp(10px, 3.2vh, 22px); gap: 1.8vh; margin: 2vh 0 0;
+            }
+            html.touch .pad, html.touch .padhelp { grid-column: 2; grid-row: 2; justify-content: flex-start; margin-top: 4vh; }
+            html.touch .btns { flex-direction: column; }
+            html.touch .padhelp { font-size: clamp(8px, 2.2vh, 13px); }
+        }
         .rainbow {
             background: linear-gradient(90deg, #f33, #fa0, #ff3, #3f6, #3cf, #a6f, #f3c);
             -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -134,12 +156,21 @@
     <canvas id="gameCanvas" width="600" height="600"></canvas>
 
     <div class="pad">
-        <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
         <div class="btns">
             <button id="btnCoat">COAT</button>
             <button id="btnPause">PAUSE</button>
         </div>
     </div>
+    <div class="padhelp">
+        <div><b>STICK/DPAD</b>STEER</div>
+        <div><b>A</b>START / GO</div>
+        <div><b>B / L1 / R1</b>TURNCOAT</div>
+        <div><b>Y</b>NEW MAP</div>
+        <div><b>X</b>MINIMAP</div>
+        <div><b>START</b>PAUSE</div>
+        <div><b>SELECT</b>CRT</div>
+    </div>
+    <div id="touchzone"><div class="fstick" id="fstick"><div class="fknob" id="fknob"></div></div></div>
 
     <div class="help">
         ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • O SHADOWS • C CRT • N NEW MAP<br>
@@ -1255,36 +1286,99 @@
         else pressDir(dy > 0 ? DIRS[2] : DIRS[0]);
     });
 
-    // --- TOUCH PAD (phones and the Android app) ---
-    // Virtual joystick: past a small dead zone the dominant axis picks one of the four grid
-    // directions, and each new direction is queued the moment the thumb crosses into it.
-    const stick = document.getElementById('stick'), knob = document.getElementById('knob');
-    let stickId = null, stickDir = -1;
-    function stickMove(e) {
-        const r = stick.getBoundingClientRect();
-        const max = r.width / 2 - 24;
-        let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-        const m = Math.hypot(dx, dy);
-        if (m > max) { dx *= max / m; dy *= max / m; }
-        knob.style.transform = `translate(${dx}px, ${dy}px)`;
-        if (m < r.width * 0.12) { stickDir = -1; return; }          // dead zone
-        const di = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
-        if (di !== stickDir) { stickDir = di; pressDir(DIRS[di]); }
-    }
-    function stickEnd(e) {
-        if (e.pointerId !== stickId) return;
-        stickId = null; stickDir = -1;
-        knob.style.transform = '';
-    }
-    stick.addEventListener('pointerdown', e => {
+    // --- INPUT MODE ---
+    // 'gamepad' while a controller is in use (the Android shell reports built-in controls like the
+    // AYN Thor's, and any controller input switches to it); touching the screen switches back.
+    const IS_APP = navigator.userAgent.includes('SnakeManApp');
+    window.setInputMode = m => document.documentElement.classList.toggle('gamepad', m === 'gamepad');
+    const padMode = () => document.documentElement.classList.contains('gamepad');
+
+    // --- FLOATING JOYSTICK (Archero-style touch steering) ---
+    // Put a thumb down anywhere and the stick appears under it. Past a small dead zone the
+    // dominant axis picks one of the four grid directions, queued the moment the thumb crosses
+    // into it. Drag past the rim and the base trails the thumb, so a reversal is one short flick.
+    const zone = document.getElementById('touchzone');
+    const fstick = document.getElementById('fstick'), fknob = document.getElementById('fknob');
+    const STICK_R = 50, STICK_DEAD = 14;
+    let fs = null;   // { id, ox, oy, dir } while a thumb is down
+    const placeStick = () => { fstick.style.left = fs.ox + 'px'; fstick.style.top = fs.oy + 'px'; };
+    zone.addEventListener('pointerdown', e => {
         e.preventDefault();
-        stickId = e.pointerId; stickDir = -1;
-        stick.setPointerCapture(e.pointerId);
-        stickMove(e);
+        setInputMode('touch');
+        if (fs) return;
+        fs = { id: e.pointerId, ox: e.clientX, oy: e.clientY, dir: -1 };
+        placeStick();
+        fknob.style.transform = '';
+        fstick.classList.add('on');
+        try { zone.setPointerCapture(e.pointerId); } catch (err) {}   // nice to have; the zone is full-screen anyway
     });
-    stick.addEventListener('pointermove', e => { if (e.pointerId === stickId) stickMove(e); });
-    stick.addEventListener('pointerup', stickEnd);
-    stick.addEventListener('pointercancel', stickEnd);
+    zone.addEventListener('pointermove', e => {
+        if (!fs || e.pointerId !== fs.id) return;
+        let dx = e.clientX - fs.ox, dy = e.clientY - fs.oy;
+        const m = Math.hypot(dx, dy);
+        if (m > STICK_R) {
+            fs.ox += dx * (1 - STICK_R / m); fs.oy += dy * (1 - STICK_R / m);
+            dx = e.clientX - fs.ox; dy = e.clientY - fs.oy;
+            placeStick();
+        }
+        fknob.style.transform = `translate(${dx}px, ${dy}px)`;
+        if (Math.hypot(dx, dy) < STICK_DEAD) { fs.dir = -1; return; }
+        const di = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+        if (di !== fs.dir) { fs.dir = di; pressDir(DIRS[di]); }
+    });
+    const stickEnd = e => {
+        if (!fs || e.pointerId !== fs.id) return;
+        fs = null;
+        fstick.classList.remove('on');
+    };
+    zone.addEventListener('pointerup', stickEnd);
+    zone.addEventListener('pointercancel', stickEnd);
+
+    // --- CONTROLLERS ---
+    // One entry point for every controller: the Android shell calls padInput() with native key /
+    // joystick events (D-pad, left stick, A B X Y, L1 R1, START, SELECT); in a browser the
+    // Gamepad API below feeds it. Layout: A start/resume/again, B (or L1/R1) Turncoat, Y new map,
+    // X minimap, START pause, SELECT CRT.
+    const PAD_DIRS = { up: 0, right: 1, down: 2, left: 3 };
+    window.padInput = a => {
+        setInputMode('gamepad');
+        if (a in PAD_DIRS) { pressDir(DIRS[PAD_DIRS[a]]); return; }
+        switch (a) {
+            case 'a':
+                if (state === 'ready' || state === 'paused') state = 'play';
+                else if (state === 'over') restart(false);
+                break;
+            case 'b': case 'l1': case 'r1': toggleCoat(); break;
+            case 'y': if (state !== 'play') restart(true); break;
+            case 'x': showMinimap = !showMinimap; break;
+            case 'start':
+                if (state === 'play') state = 'paused';
+                else if (state === 'paused' || state === 'ready') state = 'play';
+                else if (state === 'over') restart(false);
+                break;
+            case 'select': crtOn = !crtOn; break;
+        }
+    };
+
+    // Browser Gamepad API (standard mapping). Off inside the Android app, where the shell
+    // forwards controller input natively instead, so nothing is handled twice.
+    const padPrev = {}, padDir = {};
+    const PAD_BUTTONS = { 0: 'a', 1: 'b', 2: 'x', 3: 'y', 4: 'l1', 5: 'r1', 8: 'select', 9: 'start' };
+    function pollGamepads() {
+        if (IS_APP || !navigator.getGamepads) return;
+        for (const gp of navigator.getGamepads()) {
+            if (!gp) continue;
+            const now = gp.buttons.map(b => b.pressed), prev = padPrev[gp.index] || [];
+            for (const i in PAD_BUTTONS) if (now[i] && !prev[i]) padInput(PAD_BUTTONS[i]);
+            let x = gp.axes[0] || 0, y = gp.axes[1] || 0;
+            if (now[12]) y = -1; if (now[13]) y = 1; if (now[14]) x = -1; if (now[15]) x = 1;
+            let d = null;
+            if (Math.max(Math.abs(x), Math.abs(y)) >= 0.5) d = Math.abs(x) > Math.abs(y) ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'down' : 'up');
+            if (d && d !== padDir[gp.index]) padInput(d);
+            padDir[gp.index] = d;
+            padPrev[gp.index] = now;
+        }
+    }
 
     const btnCoat = document.getElementById('btnCoat'), btnPause = document.getElementById('btnPause');
     // COAT doubles as NEW (map) on the start and game-over screens, where there's no N key.
@@ -2090,10 +2184,18 @@
             flash = Math.max(0, flash - dt / 400);
         }
 
-        const touch = document.documentElement.classList.contains('touch');
-        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], [touch ? 'PUSH THE STICK' : 'PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], [touch ? 'COAT: PASS AS A GHOST' : 'ESC: TURNCOAT - PASS AS A GHOST', 10, COAT_COLOR], touch ? ['NEW: NEW MAP', 10, '#777'] : ['N: NEW MAP   C: CRT   O: SHADOWS', 10, '#777']]);
-        if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], [touch ? 'TAP GO TO RESUME' : 'SPACE TO RESUME', 12, '#999']]);
-        if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'], [touch ? 'AGAIN: SAME MAP' : 'ENTER/SPACE: SAME MAP', 10, '#999'], [touch ? 'NEW: NEW MAP' : 'N: NEW MAP', 10, '#999']]);
+        // prompts follow the input in use: controller, touch, or keyboard
+        const im = padMode() ? 'pad' : document.documentElement.classList.contains('touch') ? 'touch' : 'keys';
+        const say = o => o[im];
+        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'],
+            [say({ pad: 'PRESS A OR STEER', touch: 'TOUCH ANYWHERE & DRAG', keys: 'PRESS AN ARROW KEY' }), 14, '#0f0'],
+            ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'],
+            [say({ pad: 'B: TURNCOAT - PASS AS A GHOST', touch: 'COAT: PASS AS A GHOST', keys: 'ESC: TURNCOAT - PASS AS A GHOST' }), 10, COAT_COLOR],
+            [say({ pad: 'Y: NEW MAP', touch: 'NEW: NEW MAP', keys: 'N: NEW MAP   C: CRT   O: SHADOWS' }), 10, '#777']]);
+        if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], [say({ pad: 'START OR A TO RESUME', touch: 'TAP GO TO RESUME', keys: 'SPACE TO RESUME' }), 12, '#999']]);
+        if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'],
+            [say({ pad: 'A: SAME MAP', touch: 'AGAIN: SAME MAP', keys: 'ENTER/SPACE: SAME MAP' }), 10, '#999'],
+            [say({ pad: 'Y: NEW MAP', touch: 'NEW: NEW MAP', keys: 'N: NEW MAP' }), 10, '#999']]);
 
         present(now);
 
@@ -2115,6 +2217,7 @@
 
     let last = performance.now();
     function loop(now) {
+        pollGamepads();
         const dt = Math.min(100, now - last);
         last = now;
         if (state === 'play') update(dt);

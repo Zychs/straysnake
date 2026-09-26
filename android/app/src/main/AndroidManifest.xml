@@ -4,6 +4,10 @@
     <!-- only used to fetch the Press Start 2P web font; the game runs fully offline without it -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- plays with a controller (AYN Thor built-in, Bluetooth/USB pads) or touch; needs neither -->
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
     <application
         android:label="Snake-Man"
         android:icon="@drawable/ic_launcher"
@@ -14,7 +18,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

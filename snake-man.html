@@ -69,6 +69,10 @@
         }
         .legend b { font-weight: normal; }
         .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px 5px 2px 2px; margin-right: 6px; }
+        .rainbow {
+            background: linear-gradient(90deg, #f33, #fa0, #ff3, #3f6, #3cf, #a6f, #f3c);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+        }
     </style>
 </head>
 <body>
@@ -84,16 +88,17 @@
     <canvas id="gameCanvas" width="600" height="600"></canvas>
 
     <div class="help">
-        ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • C CRT • N NEW MAP<br>
-        THE WORLD WRAPS (TOROIDAL LOGIC) • <span style="color:#55f">BLUE WALLS</span> ARE SOLID: CRASHING COSTS A LIFE<br>
+        ARROWS / WASD / SWIPE TO MOVE • SPACE PAUSE • X DERIVATIVES • M MINIMAP • O SHADOWS • C CRT • N NEW MAP<br>
+        THE WORLD WRAPS (TOROIDAL LOGIC) • <span style="color:#55f">BLUE WALLS</span> ARE SOLID AND BLOCK YOUR VIEW: CRASHING COSTS A LIFE<br>
         EAT YELLOW DOTS TO GROW • SCORE ALL YOU CAN BEFORE THE 5:00 CLOCK RUNS OUT<br>
         GHOSTS READ YOUR MOTION, AIM, LOCK, THEN LUNGE: <span style="color:#ddd">BREAK YOUR RHYTHM WHEN A RETICLE LOCKS</span><br>
-        LUNGES BONK OFF WALLS • A LUNGE INTO YOUR BODY SNIPS THE TAIL • <span style="color:#66f">BLUE</span> DAZED GHOSTS ARE EDIBLE
+        LUNGES BONK OFF WALLS • A LUNGE INTO YOUR BODY SNIPS THE TAIL • <span style="color:#66f">BLUE</span> DAZED GHOSTS ARE EDIBLE<br>
+        <span class="rainbow">RAINBOW PELLETS</span> TURN EVERY GHOST BLUE • EATEN GHOSTS COME BACK EVOLVED FROM THE BEST HUNTER
         <div class="legend">
             <span><span class="dot" style="background:#FF0000"></span>BLINKY</span><b>x</b><span>lunges where you <i>are</i></span>
             <span><span class="dot" style="background:#FFB8FF"></span>PINKY</span><b>ẋ</b><span>leads your velocity</span>
             <span><span class="dot" style="background:#00FFFF"></span>INKY</span><b>ẍ</b><span>follows your curve (accel)</span>
-            <span><span class="dot" style="background:#FFB800"></span>CLYDE</span><b>∫x</b><span>camps your loops (joins at 100)</span>
+            <span><span class="dot" style="background:#FFB800"></span>CLYDE</span><b>∫x</b><span>camps your loops (arrives later)</span>
         </div>
     </div>
 
@@ -119,21 +124,31 @@
     const FOOD_COUNT     = 45;
     const GHOST_COPIES   = 2;     // two of each ghost roam the big map
 
-    const PLAYER_STEP_MS = 100;   // 10 steps/sec for that retro feel
-    const HUNT_STEP_MS   = 320;   // ghosts roam ~3x slower than you
-    const HUNT_STEP_MIN  = 210;   // ...and speed up a little as you score
-    const HUNT_RADIUS    = 26;    // beyond this a ghost patrols instead of hunting
-    const AIM_MS         = 1000;  // wind-up: reticle tracks your predicted motion
-    const LOCK_MS        = 350;   // last part of wind-up: reticle freezes (your cue to juke)
-    const LUNGE_STEP_MS  = 80;    // the lunge itself is faster than you
     const LUNGE_OVERSHOOT = 2;
-    const LUNGE_MAX      = 16;
     const DAZE_MS        = 1600;
     const DAZE_STEP_MS   = 480;
-    const ATTACK_RANGE   = 11;    // torus manhattan distance to start an attack
-    const MAX_ATTACKERS  = 2;
     const INVULN_MS      = 2000;
-    const CLYDE_SCORE    = 100;
+
+    const RAINBOW_COUNT      = 2;      // rainbow pellets on the map at once
+    const RAINBOW_RESPAWN_MS = 25000;  // an eaten one comes back somewhere else after this
+    const EVOLVE_MS          = 20000;  // the weakest ghost quietly molts this often
+
+    // --- SILENT DIFFICULTY ---
+    // One hidden dial, 0 → 1, fed by elapsed time and score. It only ever rises, it is never
+    // announced, and every speed, range and wind-up in the game reads from it.
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const clamp01 = t => Math.max(0, Math.min(1, t));
+    const smooth = (e0, e1, x) => { const t = clamp01((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
+    function heat() {
+        const played = (TIME_LIMIT_MS - timeLeft) / 240000;           // full heat by the 4-minute mark...
+        return clamp01(0.75 * played + 0.25 * Math.min(1, score / 600)); // ...sooner if you score well
+    }
+    const heatE = () => smooth(0, 1, heat());                          // eased: a long, slow opening
+
+    // The player starts slow and reaches full speed within the first couple of minutes.
+    const playerStepMs = () => lerp(150, 100, smooth(0, 0.45, heat()));
+    const lungeStepMs  = () => lerp(110, 78, heatE());
+    const maxAttackers = () => heatE() < 0.3 ? 1 : heatE() < 0.7 ? 2 : 3;
 
     // --- TORUS HELPERS ---
     const N = TILE_COUNT;
@@ -249,7 +264,12 @@
     let popups = [];
     let showDerivs = true;
     let showMinimap = true;
+    let occlusionOn = true;
     let playerAcc = 0;
+    let prism = 0;          // ms left on a rainbow pellet
+    let prismChain = 0;     // ghosts eaten during this prism (each worth double the last)
+    let rainbowTimers = []; // ms until each eaten rainbow pellet reappears
+    let evoAcc = 0;
     const cam = { x: 0, y: 0 };
 
     // --- PLAYER KINEMATICS (the derivatives the ghosts read) ---
@@ -337,14 +357,68 @@
         { name: 'CLYDE',  color: '#FFB800', hunt: g => toCell(trailCentroid()), aimOrder: 1, late: true },
     ];
 
-    function makeGhost(def) {
-        return {
+    // Ghosts don't all start on the board: the rest slip in unannounced as the heat rises.
+    const JOIN_AT = { BLINKY: [0, 0.10], PINKY: [0, 0.18], INKY: [0, 0.26], CLYDE: [0.32, 0.45] };
+
+    function makeGhost(def, copy) {
+        const g = {
             ...def, x: 0, y: 0, dir: { x: 1, y: 0 },
             state: 'hunt', t: 0, acc: 0, cool: 0,
             target: { x: 0, y: 0 }, wp: null, locked: false, lungeLeft: 0,
-            trail: [], active: !def.late, fade: 1,
+            trail: [], active: false, fade: 1, vis: 0,
+            joinAt: JOIN_AT[def.name][copy],
+            // The first BLINKY is armored: rainbows don't turn it blue and it can never be eaten.
+            immune: def.name === 'BLINKY' && copy === 0,
+            genes: {}, gen: 1, fit: 0, born: 0,
         };
+        for (const k of GENES) g.genes[k] = 0.15 + Math.random() * 0.2;
+        return g;
     }
+
+    // --- PROCEDURAL EVOLUTION ---
+    // Each ghost carries five genes in 0..1 (0 = timid, 1 = deadly). A ghost that lands hits
+    // earns fitness; one that gets eaten comes back as the mutated child of a fit survivor.
+    const GENES = ['speed', 'wind', 'reach', 'sense', 'nerve'];
+    const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 0.8;
+    const geneCap = () => 0.4 + 0.6 * heatE();   // evolution can't outrun the difficulty dial
+
+    function breed(child) {
+        const pool = ghosts.filter(o => o.active && o !== child);
+        const pick = () => pool[Math.floor(Math.random() * pool.length)];
+        let parent = child, mate = child;
+        if (pool.length) {
+            const worth = o => fitRate(o) + o.gen * 0.1;
+            parent = [pick(), pick(), pick()].reduce((a, b) => worth(b) > worth(a) ? b : a);   // tournament of three
+            mate = pick();
+        }
+        const cap = geneCap(), drift = lerp(0.04, 0.1, heatE());
+        for (const k of GENES) {
+            const v = Math.random() < 0.7 ? parent.genes[k] : mate.genes[k];
+            child.genes[k] = Math.max(0, Math.min(cap, v + gauss() * 0.15 + drift));
+        }
+        child.gen = parent.gen + 1;
+        child.fit = 0;
+        child.born = playedMs();
+    }
+
+    const playedMs = () => TIME_LIMIT_MS - timeLeft;
+    // hits earned per minute alive: a fair way to compare a veteran with a newborn
+    const fitRate = g => g.fit / ((playedMs() - g.born) / 60000 + 0.5);
+
+    // 0-3: how far this ghost's genome has drifted toward deadly (shown in its eyes).
+    function tier(g) {
+        const avg = GENES.reduce((s, k) => s + g.genes[k], 0) / GENES.length;
+        return avg > 0.75 ? 3 : avg > 0.55 ? 2 : avg > 0.38 ? 1 : 0;
+    }
+
+    // Everything a ghost does is its genes on top of the current heat.
+    const huntStepMs  = g => Math.max(160, lerp(440, 210, heatE()) / lerp(0.85, 1.25, g.genes.speed));
+    const aimMs       = g => lerp(1400, 900, heatE()) * lerp(1.15, 0.8, g.genes.wind);
+    const lockMs      = g => Math.min(aimMs(g) * 0.45, lerp(520, 330, heatE()));
+    const attackRange = g => Math.round(lerp(7, 12, heatE()) * lerp(0.85, 1.25, g.genes.reach));
+    const lungeMax    = g => Math.round(lerp(12, 17, heatE()) * lerp(0.85, 1.2, g.genes.reach));
+    const huntRadius  = g => Math.round(lerp(18, 28, heatE()) * lerp(0.85, 1.3, g.genes.sense));
+    const coolMul     = g => lerp(1.6, 0.85, heatE()) * lerp(1.2, 0.8, g.genes.nerve);
 
     function occupied(x, y, except) {
         return ghosts.some(o => o !== except && o.active && o.x === x && o.y === y);
@@ -361,21 +435,17 @@
         }
         g.dir = DIRS[Math.floor(Math.random() * 4)];
         g.state = 'hunt'; g.t = 0; g.acc = 0; g.locked = false; g.trail = []; g.wp = null;
-        g.cool = 1500 + Math.random() * 2500;
+        g.cool = (1500 + Math.random() * 2500) * coolMul(g);
     }
 
     function attackers() {
         return ghosts.filter(g => g.active && (g.state === 'aim' || g.state === 'lunge')).length;
     }
 
-    function huntStepMs() {
-        return Math.max(HUNT_STEP_MIN, HUNT_STEP_MS - score * 0.3);
-    }
-
     // Solve for an intercept: where will the player be when my lunge can get there?
     function interceptTarget(g, remainMs) {
-        const delay = remainMs / PLAYER_STEP_MS;          // player steps before I launch
-        const speed = PLAYER_STEP_MS / LUNGE_STEP_MS;     // my tiles per player step
+        const delay = remainMs / playerStepMs();          // player steps before I launch
+        const speed = playerStepMs() / lungeStepMs();     // my tiles per player step
         let T = delay, cell = toCell(predict(g.aimOrder, T));
         for (let i = 0; i < 5; i++) {
             const d = tdist(g.x, g.y, cell.x, cell.y);
@@ -420,9 +490,14 @@
 
     function enterState(g, s) {
         g.state = s; g.t = 0; g.acc = 0;
-        if (s === 'aim') { g.locked = false; g.target = interceptTarget(g, AIM_MS); }
-        if (s === 'lunge') { g.lungeLeft = Math.min(LUNGE_MAX, tdist(g.x, g.y, g.target.x, g.target.y) + LUNGE_OVERSHOOT); }
+        if (s === 'aim') {
+            g.locked = false;
+            g.aimMs = aimMs(g); g.lockMs = lockMs(g);   // fixed for this wind-up so the telegraph stays honest
+            g.target = interceptTarget(g, g.aimMs);
+        }
+        if (s === 'lunge') { g.lungeLeft = Math.min(lungeMax(g), tdist(g.x, g.y, g.target.x, g.target.y) + LUNGE_OVERSHOOT); }
         if (s === 'hunt') { g.trail = []; }
+        if (s === 'daze') { g.dazeFor = g.immune ? DAZE_MS : Math.max(DAZE_MS, prism); }
     }
 
     function lungeStep(g) {
@@ -452,13 +527,17 @@
                 if (invuln <= 0 && snake.length > 2) {
                     const lost = snake.length - Math.max(2, i);
                     snake.length = Math.max(2, i);
-                    if (lost > 0) addPopup(g.x, g.y, 'SNIP -' + lost, '#f66');
+                    if (lost > 0) { addPopup(g.x, g.y, 'SNIP -' + lost, '#f66'); g.fit += 1; }
                 }
                 enterState(g, 'daze');
                 return;
             }
         }
-        if (g.lungeLeft <= 0) enterState(g, 'daze');
+        if (g.lungeLeft <= 0) {
+            const h = snake[0];
+            if (tdist(g.x, g.y, h.x, h.y) <= 2) g.fit += 0.5;   // near miss still counts for something
+            enterState(g, 'daze');
+        }
     }
 
     function updateGhost(g, dt) {
@@ -471,7 +550,7 @@
             case 'hunt': {
                 const h = snake[0];
                 const d = tdist(g.x, g.y, h.x, h.y);
-                if (d <= HUNT_RADIUS) {
+                if (d <= huntRadius(g)) {
                     g.target = g.hunt(g); g.wp = null;
                 } else { // patrol: wander between random waypoints until the player is near
                     if (!g.wp || (g.x === g.wp.x && g.y === g.wp.y) || g.t > 12000) {
@@ -482,30 +561,31 @@
                     g.target = g.wp;
                 }
                 g.acc += dt;
-                const step = huntStepMs();
+                const step = huntStepMs(g);
                 if (g.acc >= step) {
                     g.acc -= step;
                     moveGhost(g, g.target);
                     if (checkContacts()) return;
                 }
-                if (g.cool <= 0 && invuln <= 0 && d <= ATTACK_RANGE && attackers() < MAX_ATTACKERS) {
+                if (g.cool <= 0 && invuln <= 0 && d <= attackRange(g) && attackers() < maxAttackers()) {
                     enterState(g, 'aim');
                 }
                 break;
             }
             case 'aim': {
-                if (g.t < AIM_MS - LOCK_MS) {
-                    g.target = interceptTarget(g, AIM_MS - g.t);
+                if (g.t < g.aimMs - g.lockMs) {
+                    g.target = interceptTarget(g, g.aimMs - g.t);
                 } else {
                     g.locked = true;
                 }
-                if (g.t >= AIM_MS) enterState(g, 'lunge');
+                if (g.t >= g.aimMs) enterState(g, 'lunge');
                 break;
             }
             case 'lunge': {
                 g.acc += dt;
-                while (g.acc >= LUNGE_STEP_MS && g.state === 'lunge' && state === 'play') {
-                    g.acc -= LUNGE_STEP_MS;
+                const step = lungeStepMs();
+                while (g.acc >= step && g.state === 'lunge' && state === 'play') {
+                    g.acc -= step;
                     lungeStep(g);
                 }
                 break;
@@ -517,9 +597,9 @@
                     moveGhost(g, snake[0], { flee: true });
                     if (checkContacts()) return;
                 }
-                if (g.t >= DAZE_MS) {
+                if (g.t >= g.dazeFor) {
                     enterState(g, 'hunt');
-                    g.cool = 2200 + Math.random() * 2000;
+                    g.cool = (2200 + Math.random() * 2000) * coolMul(g);
                 }
                 break;
             }
@@ -542,12 +622,26 @@
         pelletGrid.fill(0);
         pellets = [];
         for (let i = 0; i < FOOD_COUNT; i++) spawnPellet(rng, 6);
+        for (let i = 0; i < RAINBOW_COUNT; i++) spawnPellet(rng, 15, true);
 
         ghosts = [];
-        for (let c = 0; c < GHOST_COPIES; c++) GHOST_DEFS.forEach(def => ghosts.push(makeGhost(def)));
-        ghosts.forEach(g => { if (g.active) spawnFar(g); });
+        for (let c = 0; c < GHOST_COPIES; c++) GHOST_DEFS.forEach(def => ghosts.push(makeGhost(def, c)));
+        activateGhosts();
         invuln = 0; flash = 0; popups = [];
         playerAcc = 0;
+        prism = 0; prismChain = 0; rainbowTimers = []; evoAcc = 0;
+    }
+
+    // Silent progression: ghosts whose threshold the heat has passed fade in far away. No banner.
+    function activateGhosts() {
+        const h = heat();
+        ghosts.forEach(g => {
+            if (g.active || h < g.joinAt) return;
+            g.active = true;
+            g.born = playedMs();
+            g.fade = timeLeft < TIME_LIMIT_MS ? 0 : 1;
+            spawnFar(g);
+        });
     }
 
     // Find an open cell with room behind (for the body) and a clear runway ahead.
@@ -579,7 +673,8 @@
         placeSnake(findSpawn(h.x, h.y, 12));
     }
 
-    function spawnPellet(rand = Math.random, minDist = 10) {
+    // pelletGrid: 0 empty, 1 yellow pellet, 2 rainbow pellet
+    function spawnPellet(rand = Math.random, minDist = 10, rainbow = false) {
         const h = snake[0];
         for (let tries = 0; tries < 1000; tries++) {
             const x = Math.floor(rand() * N), y = Math.floor(rand() * N);
@@ -587,10 +682,21 @@
             if (walls[i] || pelletGrid[i]) continue;
             if (tdist(x, y, h.x, h.y) < minDist) continue;
             if (snake.some(s => s.x === x && s.y === y)) continue;
-            pelletGrid[i] = 1;
-            pellets.push({ x, y });
+            pelletGrid[i] = rainbow ? 2 : 1;
+            pellets.push({ x, y, rainbow });
             return;
         }
+    }
+
+    // A rainbow pellet turns every ghost blue and edible — except the armored one.
+    function triggerPrism(at) {
+        prism = lerp(7000, 4500, heatE());
+        prismChain = 0;
+        ghosts.forEach(g => {
+            if (!g.active || g.immune) return;
+            enterState(g, 'daze');
+        });
+        addPopup(at.x, at.y - 1, 'PRISM!', '#fff');
     }
 
     function addPopup(x, y, text, color) {
@@ -627,6 +733,7 @@
         if (k === 'x') { showDerivs = !showDerivs; return; }
         if (k === 'm') { showMinimap = !showMinimap; return; }
         if (k === 'c') { crtOn = !crtOn; return; }
+        if (k === 'o') { occlusionOn = !occlusionOn; return; }
         if (k === 'n' && (state === 'ready' || state === 'over' || state === 'paused')) { restart(true); return; }
         if (k === ' ' || k === 'p') {
             e.preventDefault();
@@ -671,7 +778,8 @@
         }
 
         const hIdx = idx(head.x, head.y);
-        const eating = pelletGrid[hIdx] === 1;
+        const eating = pelletGrid[hIdx] !== 0;
+        const rainbow = pelletGrid[hIdx] === 2;
 
         // Self collision (the tail tip moves out of the way unless we're growing)
         const n = eating ? snake.length : snake.length - 1;
@@ -690,16 +798,15 @@
         if (eating) {
             pelletGrid[hIdx] = 0;
             pellets = pellets.filter(p => p.x !== head.x || p.y !== head.y);
-            score += 10;
-            scoreEl.innerText = score;
-            spawnPellet();
-            if (score >= CLYDE_SCORE) {
-                ghosts.filter(g => g.late && !g.active).forEach(g => {
-                    g.active = true; g.fade = 0;
-                    spawnFar(g);
-                    addPopup(head.x, head.y - 1, 'CLYDE JOINS', g.color);
-                });
+            if (rainbow) {
+                score += 30;
+                triggerPrism(head);
+                rainbowTimers.push(RAINBOW_RESPAWN_MS);
+            } else {
+                score += 10;
+                spawnPellet();
             }
+            scoreEl.innerText = score;
         } else {
             snake.pop();
         }
@@ -712,18 +819,34 @@
         const h = snake[0];
         for (const g of ghosts) {
             if (!g.active || g.x !== h.x || g.y !== h.y) continue;
-            if (g.state === 'daze') { eatGhost(g); continue; }
-            if (invuln <= 0) { loseLife(); return true; }
+            if (g.state === 'daze') {
+                if (g.immune) continue;          // a dazed armored ghost is harmless, but you can't eat it
+                eatGhost(g);
+                continue;
+            }
+            if (invuln <= 0) { g.fit += 3; loseLife(); return true; }
         }
         return false;
     }
 
     function eatGhost(g) {
-        score += 50;
+        // During a prism each ghost is worth double the last: 50, 100, 200, 400.
+        const pts = prism > 0 ? 50 * 2 ** Math.min(3, prismChain++) : 50;
+        score += pts;
         scoreEl.innerText = score;
-        addPopup(g.x, g.y, '+50', '#66f');
+        addPopup(g.x, g.y, '+' + pts, '#66f');
+        breed(g);          // it comes back as the child of a fitter ghost
         spawnFar(g);
-        g.cool = 3500;
+        g.cool = 3500 * coolMul(g);
+    }
+
+    // Every so often the weakest ghost the player can't currently see molts into a fitter form.
+    // Newborns get a grace period so the same ghost isn't molted over and over.
+    function evolveWeakest() {
+        const pool = ghosts.filter(g => g.active && g.state === 'hunt' && g.vis < 0.1 && playedMs() - g.born >= 2 * EVOLVE_MS);
+        if (!pool.length) return;
+        pool.sort((a, b) => fitRate(a) - fitRate(b) || a.gen - b.gen);
+        breed(pool[0]);
     }
 
     function loseLife() {
@@ -756,8 +879,8 @@
         if (timeLeft <= 0) { timeLeft = 0; endGame('TIME UP'); return; }
 
         playerAcc += dt;
-        while (playerAcc >= PLAYER_STEP_MS) {
-            playerAcc -= PLAYER_STEP_MS;
+        for (let step = playerStepMs(); playerAcc >= step; step = playerStepMs()) {
+            playerAcc -= step;
             stepPlayer();
             if (state !== 'play') return;
         }
@@ -766,6 +889,14 @@
             if (state !== 'play') return;
         }
         invuln = Math.max(0, invuln - dt);
+        prism = Math.max(0, prism - dt);
+
+        rainbowTimers = rainbowTimers.map(t => t - dt);
+        while (rainbowTimers.length && rainbowTimers[0] <= 0) { rainbowTimers.shift(); spawnPellet(Math.random, 15, true); }
+
+        activateGhosts();
+        evoAcc += dt;
+        if (evoAcc >= EVOLVE_MS) { evoAcc = 0; evolveWeakest(); }
     }
 
     // --- RENDERING (camera follows the head; everything is drawn relative to it) ---
@@ -794,6 +925,12 @@
     }
     const rgbStr = ([r, g, b]) => `rgb(${r | 0},${g | 0},${b | 0})`;
     const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+    function hsl(h, s = 1, l = 0.55) {
+        const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+        const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+        return [f(0) * 255, f(8) * 255, f(4) * 255];
+    }
+    const HUES = 12;   // rainbow sprites are cached in 12 hue steps
     // Two-tone ramp: a highlight and a shadow around the base colour.
     function tones(base) {
         const c = typeof base === 'string' ? hexToRgb(base) : base;
@@ -860,28 +997,37 @@
     }
 
     const GHOST_EYES = [{ x: 2, y: 3 }, { x: 6, y: 3 }];
+    const TIER_PUPIL = ['#1a2cff', '#8a2cff', '#ff2048', '#ff2048'];   // evolved ghosts' eyes redden
     // look: 0-3 = DIRS index, 4 = straight ahead. mode: normal | daze | flash
-    function ghostSprite(color, frame, look, mode) {
-        return cached(`g${color}${frame}${look}${mode}`, () => {
-            const body = mode === 'daze' ? '#2233ff' : mode === 'flash' ? '#e8e8f0' : color;
+    // tier: 0-3 evolution level. armored: the one ghost that is never edible (silver rim, grey when dazed).
+    function ghostSprite(color, frame, look, mode, tr = 0, armored = false) {
+        return cached(`g${color}${frame}${look}${mode}${tr}${armored}`, () => {
+            const dazed = mode !== 'normal';
+            const body = armored && dazed ? '#5a5a6a' : mode === 'daze' ? '#2233ff' : mode === 'flash' ? '#e8e8f0' : color;
             const t = tones(body);
-            const feature = mode === 'flash' ? '#ff3030' : '#ffc0b0';
+            const feature = armored && dazed ? '#ffffff' : mode === 'flash' ? '#ff3030' : '#ffc0b0';
             const lk = look < 4 ? DIRS[look] : { x: 0, y: 0 };
-            return makeSprite((i, j) => {
+            const inside = (i, j) => {
+                if (i < 0 || i > 9 || j < 0 || j > 9) return false;
                 // silhouette: dome + body + animated skirt teeth
-                let inside;
-                if (j < 5) inside = Math.hypot(i - 4.5, j - 4.8) <= 4.9;
-                else if (j < 9) inside = true;
-                else inside = (i + frame) % 3 !== 2;
-                if (!inside) return null;
+                if (j < 5) return Math.hypot(i - 4.5, j - 4.8) <= 4.9;
+                if (j < 9) return true;
+                return (i + frame) % 3 !== 2;
+            };
+            return makeSprite((i, j) => {
+                if (!inside(i, j)) return null;
+                if (armored && !(inside(i - 1, j) && inside(i + 1, j) && inside(i, j - 1))) {
+                    return j < 5 && i < 5 ? '#ffffff' : '#a8a8b8';               // silver rim
+                }
 
                 if (mode === 'normal') {
                     for (const e of GHOST_EYES) {
                         const ei = i - e.x, ej = j - e.y;
+                        if (tr >= 2 && ej === -1 && ei >= 0 && ei <= 1) return tr >= 3 ? '#300000' : t.lo; // scowl
                         if (ei < 0 || ei > 1 || ej < 0 || ej > 2) continue;
                         const pi = lk.x < 0 ? 0 : lk.x > 0 ? 1 : (e.x < 4 ? 1 : 0);
                         const pj = lk.y < 0 ? 0 : lk.y > 0 ? 2 : 1;
-                        if (ei === pi && ej === pj) return '#1a2cff';        // pupil
+                        if (ei === pi && ej === pj) return TIER_PUPIL[tr];     // pupil
                         return ej === 2 ? '#b8b8d8' : '#ffffff';              // two-tone eye white
                     }
                 } else {
@@ -899,9 +1045,11 @@
     }
 
     const BODY_HEAD = hexToRgb('#FFB000'), BODY_TAIL = hexToRgb('#8a3a00');
-    function bodySprite(k) { // k: 0 (near head) .. 7 (tail tip)
-        return cached('body' + k, () => {
-            const t = tones(mix(BODY_HEAD, BODY_TAIL, k / 7));
+    const bodySprite = k => scaleSprite('body' + k, mix(BODY_HEAD, BODY_TAIL, k / 7)); // k: 0 (near head) .. 7 (tail tip)
+    const rainbowBodySprite = hb => scaleSprite('rbody' + hb, hsl(hb * 360 / HUES, 0.9, 0.55));
+    function scaleSprite(key, rgb) {
+        return cached(key, () => {
+            const t = tones(rgb);
             return makeSprite((i, j) => {
                 if ((i === 0 || i === 9) && (j === 0 || j === 9)) return null;   // rounded corners
                 if (j === 0 || i === 0) return t.hi;                              // lit edge
@@ -926,6 +1074,20 @@
                 if (i === 4 && j === 3) return '#ffffff';
                 const L = -(dx * 0.7 + dy * 0.7) / r;
                 return litTone(t, i, j, L);
+            });
+        });
+    }
+
+    // A faceted gem whose bands of colour roll through the spectrum (hb = hue step).
+    function rainbowPelletSprite(hb, frame) {
+        return cached('rp' + hb + frame, () => {
+            const r = frame ? 4.4 : 3.9;
+            return makeSprite((i, j) => {
+                const dx = i - 4.5, dy = j - 4.5;
+                if (Math.abs(dx) + Math.abs(dy) > r) return null;
+                if ((i === 4 && j === 2) || (frame && i === 3 && j === 3)) return '#ffffff';   // sparkle
+                const t = tones(hsl((hb * 360 / HUES + (i - j) * 28 + 720) % 360, 1, 0.55));
+                return litTone(t, i, j, -(dx * 0.7 + dy * 0.7) / r);
             });
         });
     }
@@ -979,25 +1141,106 @@
         ctx.fillText(text, snap(x), snap(y));
     }
 
-    function drawTiles() {
+    // Visit every tile around the camera: fn(wx, wy, left, top) with the tile's screen corner.
+    function forViewTiles(fn) {
         const bx = Math.floor(cam.x), by = Math.floor(cam.y);
         const half = VIEW / 2 + 2;
-        const g = GRID_SIZE;
-        ctx.fillStyle = '#1a1a1a';
         for (let j = -half; j <= half; j++) {
             for (let i = -half; i <= half; i++) {
                 const wx = bx + i, wy = by + j;
-                const left = snap(W / 2 + (wx - cam.x) * g - g / 2);
-                const top = snap(W / 2 + (wy - cam.y) * g - g / 2);
-                if (!isWall(wx, wy)) {
-                    ctx.fillRect(left, top, P, P);   // faint floor stud at each tile corner
-                    continue;
-                }
-                const mask = (isWall(wx, wy - 1) ? 1 : 0) | (isWall(wx + 1, wy) ? 2 : 0) | (isWall(wx, wy + 1) ? 4 : 0) | (isWall(wx - 1, wy) ? 8 : 0);
-                ctx.drawImage(wallSprite(mask), left, top);
-                ctx.fillStyle = '#1a1a1a';
+                fn(wx, wy, W / 2 + (wx - cam.x) * GRID_SIZE - GRID_SIZE / 2, W / 2 + (wy - cam.y) * GRID_SIZE - GRID_SIZE / 2);
             }
         }
+    }
+
+    function drawFloor() {
+        ctx.fillStyle = '#1a1a1a';
+        forViewTiles((wx, wy, left, top) => {
+            if (!isWall(wx, wy)) ctx.fillRect(snap(left), snap(top), P, P);   // faint floor stud at each tile corner
+        });
+    }
+
+    function drawWalls() {
+        forViewTiles((wx, wy, left, top) => {
+            if (!isWall(wx, wy)) return;
+            const mask = (isWall(wx, wy - 1) ? 1 : 0) | (isWall(wx + 1, wy) ? 2 : 0) | (isWall(wx, wy + 1) ? 4 : 0) | (isWall(wx - 1, wy) ? 8 : 0);
+            ctx.drawImage(wallSprite(mask), snap(left), snap(top));
+        });
+    }
+
+    // --- OCCLUSION (top-down line of sight, Super Animal Royale style) ---
+    // Every wall edge that faces the snake's head casts a shadow quad away from it. The shadows
+    // are rasterised at sub-pixel resolution, filled with a dithered dark pattern, and laid over
+    // the floor. Walls are drawn on top so the map stays readable; ghosts in shadow are hidden.
+    const shade = document.createElement('canvas');
+    shade.width = shade.height = W / P;
+    const sctx = shade.getContext('2d');
+    const shadePattern = (() => {
+        const c = document.createElement('canvas'); c.width = c.height = 2;
+        const x = c.getContext('2d');
+        x.fillStyle = '#030309'; x.fillRect(0, 0, 2, 2);
+        x.fillStyle = '#0d0d24'; x.fillRect(0, 0, 1, 1);
+        return sctx.createPattern(c, 'repeat');
+    })();
+
+    function drawOcclusion(ex, ey) {
+        const g = GRID_SIZE, FAR = W * 2;
+        sctx.setTransform(1, 0, 0, 1, 0, 0);
+        sctx.globalCompositeOperation = 'source-over';
+        sctx.clearRect(0, 0, shade.width, shade.height);
+        sctx.setTransform(1 / P, 0, 0, 1 / P, 0, 0);
+        sctx.beginPath();
+        const far = ([px, py]) => { const dx = px - ex, dy = py - ey, m = Math.hypot(dx, dy) || 1; return [px + dx / m * FAR, py + dy / m * FAR]; };
+        const quad = (a, b) => {
+            const pts = [a, b, far(b), far(a)];
+            let area = 0;
+            for (let k = 0; k < 4; k++) { const p = pts[k], q = pts[(k + 1) % 4]; area += p[0] * q[1] - q[0] * p[1]; }
+            if (area < 0) pts.reverse();                 // same winding for all, so overlaps union
+            sctx.moveTo(pts[0][0], pts[0][1]);
+            for (let k = 1; k < 4; k++) sctx.lineTo(pts[k][0], pts[k][1]);
+            sctx.closePath();
+        };
+        forViewTiles((wx, wy, l, t) => {
+            if (!isWall(wx, wy)) return;
+            const r = l + g, b = t + g;
+            // only outer edges of a wall piece that face the eye cast shadow
+            if (ey < t && !isWall(wx, wy - 1)) quad([l, t], [r, t]);
+            if (ex > r && !isWall(wx + 1, wy)) quad([r, t], [r, b]);
+            if (ey > b && !isWall(wx, wy + 1)) quad([r, b], [l, b]);
+            if (ex < l && !isWall(wx - 1, wy)) quad([l, b], [l, t]);
+        });
+        sctx.fillStyle = '#000';
+        sctx.fill();
+        sctx.setTransform(1, 0, 0, 1, 0, 0);
+        sctx.globalCompositeOperation = 'source-in';
+        sctx.fillStyle = shadePattern;
+        sctx.fillRect(0, 0, shade.width, shade.height);
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.globalAlpha = 0.88;
+        ctx.drawImage(shade, 0, 0, W, W);
+        ctx.restore();
+    }
+
+    // Can the head see this tile? March the torus-shortest segment and stop at the first wall.
+    function lineOfSight(x, y) {
+        const h = snake[0];
+        const dx = wdelta(h.x, x), dy = wdelta(h.y, y);
+        const n = Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 3);
+        for (let k = 1; k < n; k++) {
+            const t = k / n;
+            if (isWall(Math.round(h.x + dx * t), Math.round(h.y + dy * t))) return false;
+        }
+        return true;
+    }
+
+    function updateVisibility(dt) {
+        const k = 1 - Math.exp(-dt / 70);
+        ghosts.forEach(g => {
+            const seen = !occlusionOn || (onScreen(g.x, g.y) && lineOfSight(g.x, g.y));
+            g.vis += ((seen ? 1 : 0) - g.vis) * k;
+        });
     }
 
     const lookIndex = (dx, dy) => {
@@ -1006,7 +1249,7 @@
     };
 
     function drawGhost(g, now) {
-        if (!onScreen(g.x, g.y)) return;
+        if (!onScreen(g.x, g.y) || g.vis < 0.02) return;
         const s = GRID_SIZE;
         let x = sx(g.x) - s / 2, y = sy(g.y) - s / 2;
         if (g.state === 'aim') { // trembling wind-up
@@ -1015,30 +1258,32 @@
         }
         const frame = Math.floor(now / 150) % 2;
         let mode = 'normal';
-        if (g.state === 'daze') mode = (g.t > DAZE_MS - 500 && Math.floor(now / 100) % 2) ? 'flash' : 'daze';
+        if (g.state === 'daze') mode = (g.t > g.dazeFor - 500 && Math.floor(now / 100) % 2) ? 'flash' : 'daze';
         let look = lookIndex(g.dir.x, g.dir.y);
         if (g.state === 'aim') look = lookIndex(wdelta(g.x, g.target.x), wdelta(g.y, g.target.y));
+        const sprite = ghostSprite(g.color, frame, look, mode, tier(g), g.immune);
 
         // lunge afterimages
         if (g.state === 'lunge') {
             g.trail.forEach((p, i) => {
-                ctx.globalAlpha = g.fade * (0.4 - i * 0.09);
-                ctx.drawImage(ghostSprite(g.color, frame, look, mode), snap(sx(p.x) - s / 2), snap(sy(p.y) - s / 2));
+                ctx.globalAlpha = g.vis * g.fade * (0.4 - i * 0.09);
+                ctx.drawImage(sprite, snap(sx(p.x) - s / 2), snap(sy(p.y) - s / 2));
             });
         }
-        ctx.globalAlpha = g.fade;
-        ctx.drawImage(ghostSprite(g.color, frame, look, mode), snap(x), snap(y));
+        ctx.globalAlpha = g.vis * g.fade;
+        ctx.drawImage(sprite, snap(x), snap(y));
         ctx.globalAlpha = 1;
-        if (g.state === 'aim' && g.locked) pixelText('!', x + s / 2, y - 3, 10, '#fff', g.color);
+        if (g.state === 'aim' && g.locked && g.vis > 0.5) pixelText('!', x + s / 2, y - 3, 10, '#fff', g.color);
     }
 
+    // A hidden ghost still shows its reticle (that's your warning), but not the line back to it.
     function drawAim(g, now) {
         const fx = sx(g.x), fy = sy(g.y);
         const tx = fx + wdelta(g.x, g.target.x) * GRID_SIZE, ty = fy + wdelta(g.y, g.target.y) * GRID_SIZE;
-        const progress = Math.min(1, g.t / AIM_MS);
+        const progress = Math.min(1, g.t / g.aimMs);
 
         ctx.save();
-        ctx.globalAlpha = g.locked ? 0.9 : 0.35 + 0.35 * progress;
+        ctx.globalAlpha = (g.locked ? 0.9 : 0.35 + 0.35 * progress) * g.vis;
         pixelLine(fx, fy, tx, ty, g.color, g.locked ? 1 : 3);
 
         // reticle
@@ -1081,10 +1326,14 @@
         ctx.globalAlpha = blink ? 0.3 : 1;
         const g = GRID_SIZE;
 
+        // under a prism the body cycles the spectrum, and flickers back to normal as it runs out
+        const rainbow = prism > 0 && !(prism < 1500 && Math.floor(now / 120) % 2);
+        const roll = Math.floor(now / 60);
         for (let i = snake.length - 1; i >= 1; i--) {
             const part = snake[i];
             const k = Math.min(7, Math.floor((i / snake.length) * 8));
-            ctx.drawImage(bodySprite(k), snap(sx(part.x) - g / 2), snap(sy(part.y) - g / 2));
+            const spr = rainbow ? rainbowBodySprite(((roll - i) % HUES + HUES) % HUES) : bodySprite(k);
+            ctx.drawImage(spr, snap(sx(part.x) - g / 2), snap(sy(part.y) - g / 2));
         }
 
         // head: the "Pac" in Snake-Man, chomping in the direction of travel
@@ -1101,10 +1350,16 @@
         ctx.drawImage(minimap, ox, oy);
         ctx.beginPath(); ctx.rect(ox, oy, size, size); ctx.clip();
         ctx.fillStyle = '#ff0';
-        pellets.forEach(p => ctx.fillRect(ox + p.x * s - 0.5, oy + p.y * s - 0.5, 2.5, 2.5));
+        pellets.forEach(p => { if (!p.rainbow) ctx.fillRect(ox + p.x * s - 0.5, oy + p.y * s - 0.5, 2.5, 2.5); });
+        pellets.forEach(p => {
+            if (!p.rainbow) return;
+            ctx.fillStyle = rgbStr(hsl((now / 4) % 360));
+            ctx.fillRect(ox + p.x * s - 1.5, oy + p.y * s - 1.5, 4.5, 4.5);
+        });
+        // with shadows on, the minimap only shows ghosts you can actually see
         ghosts.forEach(gh => {
-            if (!gh.active) return;
-            ctx.fillStyle = gh.state === 'daze' ? '#44f' : gh.color;
+            if (!gh.active || gh.vis < 0.5) return;
+            ctx.fillStyle = gh.state === 'daze' ? (gh.immune ? '#999' : '#44f') : gh.color;
             ctx.fillRect(ox + gh.x * s - 1, oy + gh.y * s - 1, 3.5, 3.5);
         });
         // viewport box (drawn wrapped)
@@ -1197,14 +1452,21 @@
         ctx.imageSmoothingEnabled = false;
         ctx.fillStyle = 'black';
         ctx.fillRect(0, 0, W, canvas.height);
-        drawTiles();
+        drawFloor();
 
-        // Food (pulsing pellets)
+        // Food (pulsing pellets; rainbow gems roll through the spectrum)
         const pf = Math.floor(now / 220) % 2;
+        const hb = Math.floor(now / 80) % HUES;
         pellets.forEach(p => {
             if (!onScreen(p.x, p.y)) return;
-            ctx.drawImage(pelletSprite(pf), snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2));
+            const spr = p.rainbow ? rainbowPelletSprite(hb, pf) : pelletSprite(pf);
+            ctx.drawImage(spr, snap(sx(p.x) - GRID_SIZE / 2), snap(sy(p.y) - GRID_SIZE / 2));
         });
+
+        // Line of sight: shadow the floor behind walls, then lay the walls on top
+        updateVisibility(dt);
+        if (occlusionOn) drawOcclusion(sx(snake[0].x), sy(snake[0].y));
+        drawWalls();
 
         // Attack telegraphs under everything else
         ghosts.forEach(g => { if (g.active && g.state === 'aim') drawAim(g, now); });
@@ -1230,7 +1492,7 @@
             flash = Math.max(0, flash - dt / 400);
         }
 
-        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], ['PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], ['N: NEW MAP   C: CRT', 10, '#777']]);
+        if (state === 'ready') drawOverlay([['SNAKE-MAN', 32, '#FFD700'], ['PRESS AN ARROW KEY', 14, '#0f0'], ['5:00 ON THE CLOCK - MAP #' + mapSeed, 10, '#999'], ["GHOSTS READ YOUR MOTION", 10, '#999'], ['N: NEW MAP   C: CRT   O: SHADOWS', 10, '#777']]);
         if (state === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], ['SPACE TO RESUME', 12, '#999']]);
         if (state === 'over') drawOverlay([[overReason, 30, overReason === 'TIME UP' ? '#FFD700' : '#f33'], ['SCORE ' + score, 18, '#FFD700'], ['ENTER/SPACE: SAME MAP', 10, '#999'], ['N: NEW MAP', 10, '#999']]);
 

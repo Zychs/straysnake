@@ -1,9 +1,9 @@
 // SNAKE-MAN · player
 // The snake: placing it, steering it, moving it a tile at a time, eating, and getting hurt.
-// Emits: 'eat' (a pellet), 'ghostEaten', 'hit' (lost a life), 'prism' (rainbow eaten).
+// Emits: 'eat' (a pellet), 'ghostEaten', 'hit' (lost a life), 'prism' (rainbow eaten), 'boost' (fruit eaten).
 'use strict';
 (() => {
-    const { N, INVULN_MS, DIRS, lerp, wrap, idx, tdist, emit } = SM.core;
+    const { N, INVULN_MS, BOOST_MS, DIRS, lerp, wrap, idx, tdist, emit } = SM.core;
     const G = SM.G, M = SM.map, K = SM.kin, D = SM.dial, fx = SM.fx;
     const PL = SM.pellets;
 
@@ -67,18 +67,28 @@
 
     function eat(at, kind) {
         PL.take(at.x, at.y);
-        if (kind === 2) {
-            G.score += 30;
+        if (kind === PL.FRUIT) {
+            // Fruit grows you like any food but doesn't count toward the zones: it's worth 100
+            // and doubles every score for the next BOOST_MS (the 100 itself isn't doubled).
+            G.score += 100;
+            G.boost = BOOST_MS;
+            fx.popup(at.x, at.y - 1, 'x2 SCORE!', '#f33');
+            fx.burst(at.x, at.y, { n: 12, colors: ['#f33', '#fff', '#3c3'], speed: 2.5, up: 8, life: 700 });
+            emit('boost', at);
+            return;
+        }
+        if (kind === PL.RAINBOW) {
+            SM.award(30);
             triggerPrism(at);
         } else {
-            G.score += 10;
+            SM.award(10);
         }
         G.eaten++;
         if (M.growTo(G.eaten)) {
             PL.fillTo(M.STAGES[M.stage].food);
             fx.popup(at.x, at.y - 1, M.stage === M.STAGES.length - 1 ? 'THE FENCES FALL' : 'ZONE ' + (M.stage + 1), '#f6f');
         }
-        emit('eat', { x: at.x, y: at.y, rainbow: kind === 2 });
+        emit('eat', { x: at.x, y: at.y, kind, rainbow: kind === PL.RAINBOW });
     }
 
     // A rainbow pellet turns every ghost blue and edible — except the armored one.
@@ -149,8 +159,7 @@
 
     function eatGhost(g) {
         // During a prism each ghost is worth double the last: 50, 100, 200, 400.
-        const pts = G.prism > 0 ? 50 * 2 ** Math.min(3, G.prismChain++) : 50;
-        G.score += pts;
+        const pts = SM.award(G.prism > 0 ? 50 * 2 ** Math.min(3, G.prismChain++) : 50);
         fx.popup(g.x, g.y, '+' + pts, '#66f');
         emit('ghostEaten', g);
         g.active = false;  // gone for good; the chunk director breeds a replacement from fitter stock

@@ -22,6 +22,7 @@
         flash: 0,               // red hit flash, 0..1
         prism: 0,               // ms left on a rainbow pellet
         prismChain: 0,          // ghosts eaten during this prism (each worth double the last)
+        boost: 0,               // ms left on a fruit's double score
         opts: { derivs: true, minimap: true, occlusion: true, crt: true },
     };
 
@@ -40,6 +41,14 @@
     const lungeStepMs  = () => lerp(110, 78, heatE());
     const maxAttackers = () => heatE() < 0.3 ? 1 : heatE() < 0.7 ? 2 : 3;
 
+    // Every point scored goes through here, so the fruit's double-score window applies everywhere.
+    function award(pts) {
+        const p = G.boost > 0 ? pts * 2 : pts;
+        G.score += p;
+        return p;
+    }
+
     SM.G = G;
+    SM.award = award;
     SM.dial = { playedMs, heat, heatE, playerStepMs, lungeStepMs, maxAttackers };
 })();

@@ -80,7 +80,7 @@
     on('hit', () => { if (disguised) drop(null); });   // getting hit tears the disguise off
 
     SM.coat = {
-        COAT_MS, COAT_COLOR, TRAITOR_COLOR,
+        COAT_MS, COAT_COOL_MS, BUSTED_COOL_MS, COAT_COLOR, TRAITOR_COLOR,
         reset, toggle, update, sabotage, watching,
         get disguised() { return disguised; },
         get coatT() { return coatT; },

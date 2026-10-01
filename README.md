@@ -79,6 +79,10 @@ Open the project in Godot 4.x.
 Run using the default scene.  
 Music and sound are synthesized in code (`chiptune.gd`, `music.gd`, `sfx.gd`); press V to mute.
 
+### Snake-Man (browser)  
+Open `snake-man.html`.  
+Same music and cues as the Godot port, synthesized with Web Audio (`snake-man/music.js`, `snake-man/sfx.js`); press V to mute.
+
 ---
 
 ## Roadmap

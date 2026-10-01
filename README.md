@@ -76,7 +76,8 @@ Run via the built-in runner.
 
 ### Godot  
 Open the project in Godot 4.x.  
-Run using the default scene.
+Run using the default scene.  
+Music and sound are synthesized in code (`chiptune.gd`, `music.gd`, `sfx.gd`); press V to mute.
 
 ---
 

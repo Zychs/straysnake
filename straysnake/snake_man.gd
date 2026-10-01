@@ -1,11 +1,20 @@
 extends Node2D
 
 const RulesScript = preload("res://rules.gd")
+const Chiptune = preload("res://chiptune.gd")
+const Music = preload("res://music.gd")
+const Sfx = preload("res://sfx.gd")
 var rules = RulesScript.new()
 var booted := false
+var synth: Chiptune
+var sfx: Sfx
 
 func _ready() -> void:
 	rules.fresh(1)
+	synth = Chiptune.new()
+	add_child(synth)
+	sfx = Sfx.new(synth, Music.build(Chiptune.RATE))
+	sfx.observe(rules)
 	booted = true
 	print(rules.boot_line())
 
@@ -16,6 +25,7 @@ func _process(delta: float) -> void:
 		var ms := int(round(delta * 1000.0))
 		if ms > 0:
 			rules.update(ms)
+	sfx.observe(rules)
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -35,13 +45,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_LEFT, KEY_A:
 			d = Vector2i(-1, 0)
 		KEY_SHIFT:
-			rules.dig()
+			sfx.dug(rules.dig(), rules.mode)
 			return
 		KEY_ESCAPE:
 			rules.turncoat()
 			return
 		KEY_SPACE:
 			rules.toggle_pause()
+			return
+		KEY_V:
+			synth.muted = not synth.muted
 			return
 	if d != Vector2i.ZERO:
 		rules.queue_dir(d)

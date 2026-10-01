@@ -31,6 +31,8 @@
         if (k === 'c') { G.opts.crt = !G.opts.crt; return; }
         if (k === 'o') { G.opts.occlusion = !G.opts.occlusion; return; }
         if (k === 'Escape') { e.preventDefault(); SM.coat.toggle(); return; }
+        if (k === 'g' && G.mode === 'over') { SM.runlog.download(); return; }
+        if (k === 'l' && (G.mode === 'ready' || G.mode === 'over')) { SM.dial.cycleLevel(); return; }
         if (k === 'n' && (G.mode === 'ready' || G.mode === 'over' || G.mode === 'paused')) { game().restart(true); return; }
         if (k === ' ' || k === 'p') { e.preventDefault(); togglePause(); return; }
         if (k === 'Enter' && G.mode === 'over') game().restart(false);

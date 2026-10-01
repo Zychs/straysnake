@@ -5,12 +5,26 @@
 (() => {
     const { TIME_LIMIT_MS, START_LIVES, lerp, clamp01, smooth } = SM.core;
 
+    // --- LEVELS ---
+    // A level scales how fast the hidden dial climbs (rate) and how high it can go (cap).
+    const LEVELS = {
+        easy:   { rate: 0.45, cap: 0.4, bumpers: 5 },   // bumpers: wall hits that auto-turn instead of costing a life
+        normal: { rate: 1,    cap: 1,   bumpers: 0 },
+        hard:   { rate: 1.6,  cap: 1,   bumpers: 0 },
+    };
+    const LEVEL_ORDER = ['easy', 'normal', 'hard'];
+    const urlLevel = new URLSearchParams(location.search).get('level');
+    const startLevel = LEVELS[urlLevel] ? urlLevel : (LEVELS[SM.core.store.get('snakeman-level')] ? SM.core.store.get('snakeman-level') : 'normal');
+    const hiKey = level => level === 'normal' ? 'snakeman-hi' : 'snakeman-hi-' + level;   // normal keeps the old key
+
     const G = {
+        level: startLevel,
+        bumpers: 0,             // wall bounces left this run (Easy only)
         mode: 'ready',          // ready | play | paused | over
         overReason: '',
         mapSeed: 0,
         score: 0,
-        hi: +SM.core.store.get('snakeman-hi') || 0,
+        hi: +SM.core.store.get(hiKey(startLevel)) || 0,
         lives: START_LIVES,
         timeLeft: TIME_LIMIT_MS,
         eaten: 0,               // pellets eaten this run (opens the zones)
@@ -32,7 +46,8 @@
     const playedMs = () => TIME_LIMIT_MS - G.timeLeft;
     function heat() {
         const played = playedMs() / 240000;                                // full heat by the 4-minute mark...
-        return clamp01(0.75 * played + 0.25 * Math.min(1, G.score / 600)); // ...sooner if you score well
+        const L = LEVELS[G.level];
+        return Math.min(L.cap, clamp01(L.rate * (0.75 * played + 0.25 * Math.min(1, G.score / 600)))); // ...sooner if you score well
     }
     const heatE = () => smooth(0, 1, heat());                              // eased: a long, slow opening
 
@@ -48,7 +63,15 @@
         return p;
     }
 
+    // Step to the next level (only between runs) and load that level's own high score.
+    function cycleLevel() {
+        G.level = LEVEL_ORDER[(LEVEL_ORDER.indexOf(G.level) + 1) % LEVEL_ORDER.length];
+        SM.core.store.set('snakeman-level', G.level);
+        G.hi = +SM.core.store.get(hiKey(G.level)) || 0;
+        G.bumpers = LEVELS[G.level].bumpers;
+    }
+
     SM.G = G;
     SM.award = award;
-    SM.dial = { playedMs, heat, heatE, playerStepMs, lungeStepMs, maxAttackers };
+    SM.dial = { LEVELS, hiKey, cycleLevel, playedMs, heat, heatE, playerStepMs, lungeStepMs, maxAttackers };
 })();

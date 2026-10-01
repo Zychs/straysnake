@@ -408,7 +408,7 @@
 
     // --- DOM HUD ---
     const $ = id => document.getElementById(id);
-    const el = { score: $('score'), hi: $('hi'), lives: $('lives'), time: $('time'), zone: $('zone'), coat: $('coat'),
+    const el = { score: $('score'), hi: $('hi'), lives: $('lives'), walls: $('walls'), wallsBox: $('wallsBox'), time: $('time'), zone: $('zone'), coat: $('coat'),
                  dash: $('dash'), kin: $('kin'), btnCoat: $('btnCoat'), btnPause: $('btnPause'), btnDash: $('btnDash') };
     const setText = (e, t) => { if (e && e.innerText !== String(t)) e.innerText = t; };
     const fmtTime = ms => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
@@ -419,6 +419,10 @@
         el.score.style.color = G.boost > 0 ? '#f55' : '';
         setText(el.hi, G.hi);
         setText(el.lives, G.lives);
+        const maxB = SM.dial.LEVELS[G.level].bumpers;
+        if (el.wallsBox) el.wallsBox.hidden = maxB === 0;
+        setText(el.walls, '■'.repeat(G.bumpers) + '□'.repeat(Math.max(0, maxB - G.bumpers)));
+        if (el.walls) el.walls.style.color = G.bumpers > 2 ? '#6f6' : G.bumpers > 0 ? '#fa0' : '#f33';
         setText(el.time, fmtTime(G.timeLeft));
         el.time.className = G.timeLeft <= 30000 ? 'low' : '';
         const next = M.STAGES[M.stage + 1];
@@ -473,9 +477,11 @@
         }
 
         const touch = document.documentElement.classList.contains('touch');
+        const LEVEL_COLOR = { easy: '#6f6', normal: '#FFD700', hard: '#f55' };
         if (G.mode === 'ready') drawOverlay([
             ['SNAKE-MAN', 32, '#FFD700'],
             [touch ? 'PUSH THE STICK' : 'PRESS AN ARROW KEY', 14, '#0f0'],
+            ['LEVEL: ' + G.level.toUpperCase() + (touch ? '' : '   (L TO CHANGE)'), 12, LEVEL_COLOR[G.level]],
             ['5:00 ON THE CLOCK - MAP #' + G.mapSeed, 10, '#999'],
             [touch ? 'DIG: BURROW UNDER WALLS' : 'SHIFT: DASH - BURROW UNDER WALLS', 10, '#c89c62'],
             [touch ? 'COAT: PASS AS A GHOST' : 'ESC: TURNCOAT - PASS AS A GHOST', 10, SM.coat.COAT_COLOR],
@@ -486,9 +492,10 @@
         if (G.mode === 'over') drawOverlay([
             [G.overReason, 30, G.overReason === 'TIME UP' ? '#FFD700' : '#f33'],
             ['SCORE ' + G.score, 18, '#FFD700'],
+            [G.level.toUpperCase() + ' BEST ' + G.hi + (touch ? '' : '   L: LEVEL'), 10, LEVEL_COLOR[G.level]],
             ['LADDER RUNG ' + (SM.heal.rung + 1), 10, '#ff5577'],
             [touch ? 'AGAIN: SAME MAP' : 'ENTER/SPACE: SAME MAP', 10, '#999'],
-            [touch ? 'NEW: NEW MAP' : 'N: NEW MAP', 10, '#999'],
+            [touch ? 'NEW: NEW MAP' : 'N: NEW MAP   G: SAVE RUN LOG', 10, '#999'],
         ]);
 
         present(now);

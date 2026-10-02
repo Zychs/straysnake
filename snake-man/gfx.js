@@ -172,6 +172,27 @@
         });
     }
 
+    // Twin cherries on a green stem (the fruit). frame bobs them a sub-pixel.
+    function fruitSprite(frame) {
+        return cached('fruit' + frame, () => {
+            const red = tones('#EE1122'), stem = tones('#33AA33');
+            const cy = frame ? 6.5 : 6;
+            return makeSprite((i, j) => {
+                for (const cx of [2.8, 6.4]) {
+                    const dx = i - cx, dy = j - cy, d = Math.hypot(dx, dy);
+                    if (d <= 2.1) {
+                        if (Math.round(dx) === -1 && Math.round(dy) === -1) return '#ffffff';
+                        return litTone(red, i, j, -(dx * 0.7 + dy * 0.7) / 2.1);
+                    }
+                }
+                // stems: from each cherry up to a joint near the top right
+                if ((j >= 1 && j <= cy - 2 && Math.abs(i - (2.8 + (cy - 2 - j) * 0.9)) < 0.6) ||
+                    (j >= 1 && j <= cy - 2 && Math.abs(i - 6.4 - (cy - 2 - j) * 0.1) < 0.6)) return litTone(stem, i, j, 0.3);
+                return null;
+            });
+        });
+    }
+
     // A faceted gem whose bands of colour roll through the spectrum (hb = hue step).
     function rainbowPelletSprite(hb, frame) {
         return cached('rp' + hb + frame, () => {
@@ -298,7 +319,7 @@
     SM.gfx = {
         hexToRgb, rgbStr, mix, hsl, HUES, tones, dither, litTone, makeSprite, cached,
         pacSprite, ghostSprite, bodySprite, rainbowBodySprite, coatBodySprite,
-        pelletSprite, rainbowPelletSprite, wallSprite, fenceSprite,
+        pelletSprite, rainbowPelletSprite, fruitSprite, wallSprite, fenceSprite,
         moundSprite, holeSprite, ridgeSprite, heartSprite, DIRT,
         pixelLine, pixelArrow, pixelRing, pixelText,
     };

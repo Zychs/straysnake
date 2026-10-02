@@ -109,8 +109,7 @@
             G.lives++;
             fx.popup(h.x, h.y - 1, 'HEALED +1', '#ff5577');
         } else {
-            const pts = 100 * (rung + 1);
-            G.score += pts;
+            const pts = SM.award(100 * (rung + 1));
             fx.popup(h.x, h.y - 1, 'BANKED +' + pts, '#ff99aa');
         }
         fx.burst(h.x, h.y, { n: 14, colors: ['#ff3355', '#ff99aa', '#fff'], speed: 2, up: 10, life: 800 });

@@ -8,6 +8,7 @@
 //   A  DIG      (between runs: LEVEL)       B  COAT     (between runs: NEW map)
 //   X  ZOOM     (steps through a few)       Y  PAUSE    (GO / AGAIN), also START
 //   LB / RB  zoom out / in                  VIEW (back)  LEVEL between runs
+//   right-stick click (R3)  AUTO on / off
 //
 // A one-stick controller has no right stick, so its zoom lives on X and the shoulders.
 // Polling only presses the same verbs input.js does; it holds no game state.
@@ -17,7 +18,7 @@
     const I = SM.input, V = SM.view;
 
     // Standard-mapping button indices.
-    const A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, VIEW_BTN = 8, START = 9;
+    const A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, VIEW_BTN = 8, START = 9, R3 = 11;
     const DPAD = { 12: 0, 15: 1, 13: 2, 14: 3 };   // up, right, down, left → DIRS index
 
     const MOVE_DEAD = 0.5;    // the stick must lean this far before it picks a direction
@@ -77,6 +78,7 @@
             if (down(Y) || down(START)) I.togglePause();
             if (down(LB)) I.zoomStep(1 / 1.25);
             if (down(RB)) I.zoomStep(1.25);
+            if (down(R3)) SM.auto.toggle();
             if (down(VIEW_BTN) && (SM.G.mode === 'ready' || SM.G.mode === 'over')) SM.dial.cycleLevel();
         });
         if (!pads.length) moveDir = -1;

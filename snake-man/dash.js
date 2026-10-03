@@ -92,7 +92,7 @@
         seg.exit = r.tun;
         if (t) { t.exitOpen = true; t.age = 0; }
         run = null;
-        cool = DASH_COOL_MS;
+        cool = DASH_COOL_MS * G.digCoolMul;
         emergeT = EMERGE_MS;
         fx.burst(seg.x, seg.y, { n: 18, colors: DIRT, speed: 3.5, up: 9, life: 750 });
         emit('surfaced', { walls: r.walls, len: r.path.length });

@@ -9,11 +9,11 @@ android {
     compileSdk 34
 
     defaultConfig {
-        applicationId 'com.zychs.snakeman'
+        applicationId 'com.zychs.snakeman.idle'   // the idle fork installs alongside the main game
         minSdk 24
         targetSdk 34
-        versionCode 4
-        versionName '0.4'
+        versionCode 1
+        versionName '0.1-idle'
     }
 
     compileOptions {

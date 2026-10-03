@@ -38,6 +38,8 @@
         prismChain: 0,          // ghosts eaten during this prism (each worth double the last)
         boost: 0,               // ms left on a fruit's double score
         opts: { derivs: true, minimap: true, occlusion: true, crt: true },
+        bonusLives: 0,          // idle upgrades (idle.js): extra lives at the start of a run...
+        digCoolMul: 1,          // ...and a shorter DIG cooldown
     };
 
     // --- SILENT DIFFICULTY ---

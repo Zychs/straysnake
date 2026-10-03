@@ -8,7 +8,11 @@
     const G = SM.G;
     const game = () => SM.game;
 
+    // Any steering of your own takes the wheel back from the autopilot for a while.
+    const hands = () => { if (SM.auto) SM.auto.manual(); };
+
     function pressDir(d) {
+        hands();
         if (G.mode === 'ready') G.mode = 'play';
         if (G.mode === 'play') SM.player.queueDir(d);
     }
@@ -19,8 +23,8 @@
     }
     // Between runs (start and game-over screens) DIG picks the level and COAT draws a new map.
     const menu = () => G.mode === 'ready' || G.mode === 'over';
-    function dig() { if (menu()) SM.dial.cycleLevel(); else SM.dash.start(); }
-    function coat() { if (menu()) game().restart(true); else SM.coat.toggle(); }
+    function dig() { hands(); if (menu()) SM.dial.cycleLevel(); else SM.dash.start(); }
+    function coat() { hands(); if (menu()) game().restart(true); else SM.coat.toggle(); }
     const zoomStep = f => SM.view.setZoom(SM.view.cam.z * f);
 
     const KEYMAP = {
@@ -31,14 +35,15 @@
     window.addEventListener('keydown', e => {
         const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
         if (KEYMAP[k]) { e.preventDefault(); pressDir(KEYMAP[k]); return; }
-        if (k === 'Shift') { e.preventDefault(); if (!e.repeat) SM.dash.start(); return; }
+        if (k === 'Shift') { e.preventDefault(); if (!e.repeat) { hands(); SM.dash.start(); } return; }
+        if (k === 'i') { SM.auto.toggle(); return; }
         if (k === 'x') { G.opts.derivs = !G.opts.derivs; return; }
         if (k === 'm') { G.opts.minimap = !G.opts.minimap; return; }
         if (k === 'c') { G.opts.crt = !G.opts.crt; return; }
         if (k === 'o') { G.opts.occlusion = !G.opts.occlusion; return; }
         if (k === '-') { zoomStep(1 / 1.25); return; }
         if (k === '=' || k === '+') { zoomStep(1.25); return; }
-        if (k === 'Escape') { e.preventDefault(); SM.coat.toggle(); return; }
+        if (k === 'Escape') { e.preventDefault(); hands(); SM.coat.toggle(); return; }
         if (k === 'g' && G.mode === 'over') { SM.runlog.download(); return; }
         if (k === 'l' && (G.mode === 'ready' || G.mode === 'over')) { SM.dial.cycleLevel(); return; }
         if (k === 'n' && (G.mode === 'ready' || G.mode === 'over' || G.mode === 'paused')) { game().restart(true); return; }

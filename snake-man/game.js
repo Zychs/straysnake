@@ -7,7 +7,7 @@
 
     function init() {
         M.generate(G.mapSeed);
-        G.score = 0; G.lives = START_LIVES; G.eaten = 0; G.bumpers = SM.dial.LEVELS[G.level].bumpers;
+        G.score = 0; G.lives = Math.min(SM.core.MAX_LIVES, START_LIVES + G.bonusLives); G.eaten = 0; G.bumpers = SM.dial.LEVELS[G.level].bumpers;
         G.timeLeft = TIME_LIMIT_MS;
         G.overReason = '';
         G.ghosts = [];

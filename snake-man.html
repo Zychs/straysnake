@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>SNAKE-MAN: TOROIDAL EDITION</title>
+    <title>SNAKE-MAN IDLE</title>
     <script>
         // Touch mode: a touch-only device, the Android app (?app=1 / its user agent), or ?pad=1.
         (() => {
@@ -88,10 +88,12 @@
         }
         html.touch .stats { font-size: 11px; gap: 4px 16px; margin-bottom: 8px; }
         html.touch .kin, html.touch .help { display: none; }
-        html.touch canvas {   /* portrait: room for two rows of stats above and the pad below */
-            width: min(600px, 92vw, calc(100vh - 290px));
-            width: min(600px, 92vw, calc(100dvh - 290px));
+        html.touch canvas {   /* portrait: room for stats above, the idle panel and the pad below */
+            width: min(600px, 92vw, calc(100vh - 370px));
+            width: min(600px, 92vw, calc(100dvh - 370px));
         }
+        html.touch .idle { order: 1; margin-top: 10px; }
+        html.touch .pad { order: 2; }
         html.touch .pad {
             display: flex; align-items: center; justify-content: space-between;
             width: min(600px, 92vw); margin-top: 18px; touch-action: none;
@@ -101,7 +103,7 @@
         @media (orientation: landscape) {
             html.touch body {
                 display: grid; grid-template-columns: 1fr auto 1fr; grid-template-rows: 1fr 1fr;
-                grid-template-areas: "stats screen btns" "stick screen btns";
+                grid-template-areas: "stats screen idle" "stick screen btns";
                 align-items: center; justify-items: center; column-gap: 16px;
                 padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
                          max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
@@ -115,11 +117,17 @@
             html.touch .pad { display: contents; }
             html.touch .stick { grid-area: stick; }
             html.touch .btns { grid-area: btns; }
+            html.touch .idle {
+                grid-area: idle; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+                margin: 0; gap: 6px; width: min(100%, 200px);
+            }
+            html.touch .ups { flex-direction: column; align-items: stretch; }
+            html.touch .idle .scales { text-align: center; }
         }
         /* A gamepad is connected: its own stick and buttons replace the on-screen ones. */
         html.gamepad .stick, html.gamepad .btns { display: none; }
         @media (orientation: landscape) {
-            html.touch.gamepad body { grid-template-areas: "stats screen ." "stats screen ."; }
+            html.touch.gamepad body { grid-template-areas: "stats screen idle" "stats screen idle"; }
         }
         .stick {
             position: relative; width: 150px; height: 150px; border-radius: 50%;
@@ -147,6 +155,23 @@
         #btnCoat { color: #b89cff; border-color: #4a3a80; }
         #btnCoat.cool, #btnDash.cool { color: #555; border-color: #2a2a2a; }
         #btnDash { color: #c89c62; border-color: #6b4a2b; }
+        /* Idle panel: the AUTO switch, the scales you've banked, and what they buy. */
+        .idle {
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px;
+            margin-top: 12px; max-width: min(600px, 92vw);
+            font-family: 'Press Start 2P', 'Courier New', monospace; font-size: 10px; color: #0ff;
+        }
+        .idle button {
+            font-family: inherit; font-size: 9px; padding: 7px 9px; border-radius: 10px; touch-action: none;
+            background: #0c0c14; color: #0ff; border: 2px solid #1a5050; box-shadow: 0 3px 0 #000;
+        }
+        .idle button:active { transform: translateY(2px); box-shadow: 0 1px 0 #000; }
+        #btnAuto { color: #888; border-color: #333; }
+        #btnAuto.on { color: #0ff; border-color: #0aa; box-shadow: 0 3px 0 #000, 0 0 10px rgba(0,255,255,0.25); }
+        .idle .up.broke { color: #466; }
+        .idle .up.maxed { color: #fd0; border-color: #554400; }
+        #away { color: #6f6; }
+        .ups { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
         .rainbow {
             background: linear-gradient(90deg, #f33, #fa0, #ff3, #3f6, #3cf, #a6f, #f3c);
             -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -178,8 +203,14 @@
         </div>
     </div>
 
+    <div class="idle">
+        <button id="btnAuto">AUTO</button>
+        <div class="scales">SCALES <span id="scales">0</span> <span id="away"></span></div>
+        <div class="ups" id="ups"></div>
+    </div>
+
     <div class="help">
-        MOVE: ARROWS / WASD / SWIPE • <span style="color:#c89c62">SHIFT: DIG</span> UNDER WALLS • <span style="color:#b89cff">ESC: TURNCOAT</span> • SPACE PAUSE • V SOUND • − / = ZOOM<br>
+        MOVE: ARROWS / WASD / SWIPE • <span style="color:#c89c62">SHIFT: DIG</span> UNDER WALLS • <span style="color:#b89cff">ESC: TURNCOAT</span> • SPACE PAUSE • V SOUND • − / = ZOOM • <span style="color:#0ff">I: AUTOPLAY</span><br>
         EAT DOTS, SCORE BEFORE 5:00 • <span style="color:#55f">WALLS</span> COST A LIFE • <span class="rainbow">RAINBOWS</span> MAKE GHOSTS EDIBLE • <span style="color:#f33">CHERRIES</span> x2 SCORE<br>
         WHEN A RETICLE LOCKS, <span style="color:#ddd">BREAK YOUR RHYTHM</span>
         <div class="legend">
@@ -210,6 +241,8 @@
     <script src="snake-man/render.js"></script>
     <script src="snake-man/input.js"></script>
     <script src="snake-man/gamepad.js"></script>
+    <script src="snake-man/idle.js"></script>
+    <script src="snake-man/autopilot.js"></script>
     <script src="snake-man/runlog.js"></script>
     <script src="snake-man/game.js"></script>
 </body>

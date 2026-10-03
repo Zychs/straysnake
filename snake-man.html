@@ -171,6 +171,12 @@
         .idle .up.broke { color: #466; }
         .idle .up.maxed { color: #fd0; border-color: #554400; }
         #away { color: #6f6; }
+        /* the tap meter fills left to right behind its label */
+        .heart {
+            color: #ff99aa; padding: 4px 8px; border: 2px solid #4a1828; border-radius: 8px; text-align: center;
+            background: linear-gradient(90deg, #4a1020 var(--p, 0%), #0c0c14 var(--p, 0%));
+        }
+        .heart.full { color: #fff; border-color: #ff3355; }
         .ups { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
         .rainbow {
             background: linear-gradient(90deg, #f33, #fa0, #ff3, #3f6, #3cf, #a6f, #f3c);
@@ -206,6 +212,7 @@
     <div class="idle">
         <button id="btnAuto">AUTO</button>
         <div class="scales">SCALES <span id="scales">0</span> <span id="away"></span></div>
+        <div class="heart" id="heartBox">HEART <span id="heart">0/500</span></div>
         <div class="ups" id="ups"></div>
     </div>
 

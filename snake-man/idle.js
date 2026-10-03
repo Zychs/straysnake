@@ -2,6 +2,8 @@
 // The idle layer: every point scored also pays out SCALES, a currency that outlives the run.
 // Scales buy upgrades for the autopilot and for every run after. Time away pays too, at half
 // the best rate an autoplayed run has earned lately, capped at 8 hours.
+// The clicker part: tapping the game screen while a run plays fills the HEART meter, very
+// slowly. A full meter is one more life; at the life cap it waits, full, until you lose one.
 // The panel (scales, upgrades, the AUTO switch) is DOM, next to the canvas.
 'use strict';
 (() => {
@@ -12,6 +14,7 @@
     const SCALES_PER_POINT = 0.1;
     const AWAY_CAP_MS = 8 * 3600 * 1000, AWAY_RATE = 0.5, AWAY_MIN_MS = 60 * 1000;
     const RATES_KEPT = 5;              // the last few autoplayed runs set the offline rate
+    const TAPS_PER_LIFE = 500;         // a life is a lot: the meter keeps its progress between runs
 
     // cost of the next level = base * grow^level
     const UPGRADES = [
@@ -28,6 +31,7 @@
         rates: Array.isArray(saved.rates) ? saved.rates : [],   // scales per minute of recent auto runs
         lastSeen: +saved.lastSeen || 0,
         autoOn: !!saved.autoOn,
+        taps: +saved.taps || 0,        // toward the next life, 0..TAPS_PER_LIFE
     };
     let away = 0;                      // scales credited for time away, shown for a while
     let awayT = 0;
@@ -79,6 +83,26 @@
         save();
     }
 
+    // --- TAPPING ---
+    // Only taps during play count, so the meter can't be filled from the start screen.
+    function tap() {
+        if (G.mode !== 'play' || S.taps >= TAPS_PER_LIFE) return;
+        S.taps++;
+        const h = G.snake[0];
+        SM.fx.burst(h.x, h.y, { n: 2, colors: ['#ff3355', '#ff99aa'], speed: 1, up: 6, life: 450 });
+        payHeart();
+    }
+    // A full meter pays out as soon as there's room under the life cap.
+    function payHeart() {
+        if (S.taps < TAPS_PER_LIFE || G.mode !== 'play' || G.lives >= MAX_LIVES) return;
+        S.taps = 0;
+        G.lives++;
+        const h = G.snake[0];
+        SM.fx.popup(h.x, h.y - 1, 'TAPPED +1', '#ff5577');
+        SM.fx.burst(h.x, h.y, { n: 14, colors: ['#ff3355', '#ff99aa', '#fff'], speed: 2, up: 10, life: 800 });
+        save();
+    }
+
     // --- TIME AWAY ---
     function creditAway() {
         const gone = Date.now() - S.lastSeen;
@@ -90,7 +114,7 @@
 
     // --- PANEL ---
     const $ = id => document.getElementById(id);
-    const el = { scales: $('scales'), away: $('away'), ups: $('ups'), auto: $('btnAuto') };
+    const el = { scales: $('scales'), away: $('away'), ups: $('ups'), auto: $('btnAuto'), heart: $('heart'), heartBox: $('heartBox') };
     const btns = {};
     UPGRADES.forEach(u => {
         const b = document.createElement('button');
@@ -107,6 +131,10 @@
         setText(el.scales, Math.floor(S.scales));
         awayT = Math.max(0, awayT - dt);
         setText(el.away, awayT > 0 ? '+' + away + ' AWAY' : '');
+        const full = S.taps >= TAPS_PER_LIFE;
+        setText(el.heart, full ? 'FULL' : S.taps + '/' + TAPS_PER_LIFE);
+        el.heartBox.style.setProperty('--p', (100 * S.taps / TAPS_PER_LIFE).toFixed(1) + '%');
+        el.heartBox.classList.toggle('full', full);
         UPGRADES.forEach(u => {
             const lv = S.lv[u.id], maxed = lv >= u.max, b = btns[u.id];
             setText(b, u.name + ' ' + lv + (maxed ? '  MAX' : '  ' + cost(u)));
@@ -123,6 +151,7 @@
         const dt = Math.min(250, now - last);
         last = now;
         track();
+        payHeart();
         panel(dt);
         if ((saveT += dt) > 5000) { saveT = 0; save(); }
         requestAnimationFrame(frame);
@@ -135,7 +164,7 @@
     requestAnimationFrame(frame);
 
     SM.idle = {
-        UPGRADES, buy, save, cost, greedMul,
+        UPGRADES, buy, save, cost, greedMul, tap,
         get scales() { return S.scales; },
         level: id => S.lv[id],
         get autoWasOn() { return S.autoOn; },

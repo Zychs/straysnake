@@ -51,7 +51,14 @@
         if (k === 'Enter' && G.mode === 'over') game().restart(false);
     });
 
+    // A tap on the screen feeds the idle HEART meter while a run plays; otherwise it pauses / resumes.
+    function tap() {
+        if (G.mode === 'play' && SM.idle) SM.idle.tap();
+        else togglePause();
+    }
+
     const canvas = SM.view.canvas;
+    canvas.addEventListener('mousedown', e => { if (e.button === 0) tap(); });   // the desktop's tap
     let touchStart = null;
     canvas.addEventListener('touchstart', e => { const t = e.touches[0]; touchStart = { x: t.clientX, y: t.clientY }; e.preventDefault(); }, { passive: false });
     canvas.addEventListener('touchend', e => {
@@ -59,7 +66,7 @@
         const t = e.changedTouches[0];
         const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
         touchStart = null;
-        if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) { togglePause(); return; }
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) { tap(); return; }
         if (Math.abs(dx) > Math.abs(dy)) pressDir(dx > 0 ? DIRS[1] : DIRS[3]);
         else pressDir(dy > 0 ? DIRS[2] : DIRS[0]);
     });

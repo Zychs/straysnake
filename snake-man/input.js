@@ -1,5 +1,6 @@
 // SNAKE-MAN · input
 // Keyboard, swipes, the touch pad (joystick + DIG / COAT / PAUSE) and the Android app hooks.
+// Gamepads live in gamepad.js and press the same verbs.
 // Input only ever calls the game's public verbs; it holds no game state of its own.
 'use strict';
 (() => {
@@ -16,6 +17,11 @@
         else if (G.mode === 'paused') G.mode = 'play';
         else if (G.mode === 'over') game().restart(false);
     }
+    // Between runs (start and game-over screens) DIG picks the level and COAT draws a new map.
+    const menu = () => G.mode === 'ready' || G.mode === 'over';
+    function dig() { if (menu()) SM.dial.cycleLevel(); else SM.dash.start(); }
+    function coat() { if (menu()) game().restart(true); else SM.coat.toggle(); }
+    const zoomStep = f => SM.view.setZoom(SM.view.cam.z * f);
 
     const KEYMAP = {
         ArrowUp: DIRS[0], ArrowRight: DIRS[1], ArrowDown: DIRS[2], ArrowLeft: DIRS[3],
@@ -30,6 +36,8 @@
         if (k === 'm') { G.opts.minimap = !G.opts.minimap; return; }
         if (k === 'c') { G.opts.crt = !G.opts.crt; return; }
         if (k === 'o') { G.opts.occlusion = !G.opts.occlusion; return; }
+        if (k === '-') { zoomStep(1 / 1.25); return; }
+        if (k === '=' || k === '+') { zoomStep(1.25); return; }
         if (k === 'Escape') { e.preventDefault(); SM.coat.toggle(); return; }
         if (k === 'g' && G.mode === 'over') { SM.runlog.download(); return; }
         if (k === 'l' && (G.mode === 'ready' || G.mode === 'over')) { SM.dial.cycleLevel(); return; }
@@ -83,9 +91,9 @@
     stick.addEventListener('pointercancel', stickEnd);
 
     const press = (id, fn) => document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); fn(); });
-    press('btnDash', () => SM.dash.start());
-    // COAT doubles as NEW (map) on the start and game-over screens, where there's no N key.
-    press('btnCoat', () => { if (G.mode === 'ready' || G.mode === 'over') game().restart(true); else SM.coat.toggle(); });
+    // DIG doubles as LEVEL and COAT as NEW (map) on the start and game-over screens.
+    press('btnDash', dig);
+    press('btnCoat', coat);
     press('btnPause', togglePause);
 
     // Android back button (called by the app shell): pause if playing, otherwise let the app close.
@@ -93,5 +101,5 @@
     window.onAppHidden = () => { if (G.mode === 'play') G.mode = 'paused'; };
     document.addEventListener('visibilitychange', () => { if (document.hidden) window.onAppHidden(); });
 
-    SM.input = { pressDir, togglePause };
+    SM.input = { pressDir, togglePause, dig, coat, zoomStep };
 })();

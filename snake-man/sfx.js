@@ -1,6 +1,6 @@
 // SNAKE-MAN · sfx
 // Sound, synthesised on the fly: no audio files, so it works from file:// and in the Android
-// WebView. One AudioContext for the whole run, created on the first key or touch (browsers
+// WebView. One AudioContext for the whole run, created on the first key, touch or gamepad button (browsers
 // refuse to start audio before a user gesture). Each sound is a few short-lived oscillator
 // notes scheduled on the context clock; the nodes free themselves when they stop.
 // Effects are driven by bus events, so no rule knows sound exists. Mode changes (start, pause,
@@ -230,5 +230,5 @@
 
     window.addEventListener('keydown', e => { if (e.key === 'v' || e.key === 'V') setMuted(!muted); });
 
-    SM.sfx = { tone, arp, setMuted, playMusic, pauseMusic, resumeMusic, stopMusic, get muted() { return muted; } };
+    SM.sfx = { unlock, tone, arp, setMuted, playMusic, pauseMusic, resumeMusic, stopMusic, get muted() { return muted; } };
 })();

@@ -11,7 +11,8 @@ import android.webkit.WebViewClient;
 /**
  * A full-screen WebView around snake-man.html (copied in as assets/index.html at build time,
  * with its script modules in assets/snake-man/).
- * The page switches to its touch layout (joystick + COAT / PAUSE buttons) when it sees ?app=1.
+ * The page switches to its touch layout (joystick + DIG / COAT / PAUSE buttons) when it sees ?app=1.
+ * Landscape, so it sits in a clip-on controller; gamepads reach the page through the Gamepad API.
  */
 public class MainActivity extends Activity {
     private WebView web;
@@ -27,9 +28,11 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);          // high score and map seed live in localStorage
+        s.setMediaPlaybackRequiresUserGesture(false);   // sound starts for gamepad players, who never touch the screen
         s.setUserAgentString(s.getUserAgentString() + " SnakeManApp");
         web.setWebViewClient(new WebViewClient());   // keep any navigation inside the app
         setContentView(web);
+        web.requestFocus();                    // controller input goes to the focused view
         hideSystemBars();
 
         if (saved != null) web.restoreState(saved);

@@ -4,9 +4,9 @@
 // Reads game state, never changes it (the one exception: ghosts' fade-in visibility).
 'use strict';
 (() => {
-    const { GRID_SIZE, W, VIEW, N, CN, CHUNK, idx, wdelta, dirIndex, on } = SM.core;
+    const { GRID_SIZE, W, N, CN, CHUNK, idx, wdelta, dirIndex, on } = SM.core;
     const G = SM.G, M = SM.map, K = SM.kin, gfx = SM.gfx, fx = SM.fx;
-    const { canvas, dctx, scene, ctx, cam, P, S, snap, sx, sy, onScreen } = SM.view;
+    const { canvas, dctx, scene, ctx, cam, P, S, snap, sx, sy, onScreen, viewHalf, ZOOM_MIN } = SM.view;
     const { pixelLine, pixelArrow, pixelRing, pixelText } = gfx;
 
     // District colours: floor studs and minimap tint, so the layout reads at a glance.
@@ -41,7 +41,7 @@
     // Visit every tile around the camera: fn(wx, wy, left, top) with the tile's screen corner.
     function forViewTiles(fn) {
         const bx = Math.floor(cam.x), by = Math.floor(cam.y);
-        const half = VIEW / 2 + 2;
+        const half = Math.ceil(viewHalf()) + 2;
         for (let j = -half; j <= half; j++) {
             for (let i = -half; i <= half; i++) {
                 const wx = bx + i, wy = by + j;
@@ -92,8 +92,10 @@
     // Every wall edge that faces the snake's head casts a shadow quad away from it. The shadows
     // are rasterised at sub-pixel resolution, filled with a dithered dark pattern, and laid over
     // the floor. Walls are drawn on top so the map stays readable; ghosts in shadow are hidden.
+    // The shade covers the widest zoom: SHADE_PAD px of world past each screen edge.
+    const SHADE_PAD = (W / ZOOM_MIN - W) / 2;
     const shade = document.createElement('canvas');
-    shade.width = shade.height = W / P;
+    shade.width = shade.height = (W + 2 * SHADE_PAD) / P;
     const sctx = shade.getContext('2d');
     const shadePattern = (() => {
         const c = document.createElement('canvas'); c.width = c.height = 2;
@@ -104,11 +106,11 @@
     })();
 
     function drawOcclusion(ex, ey) {
-        const g = GRID_SIZE, FAR = W * 2;
+        const g = GRID_SIZE, FAR = W * 3;
         sctx.setTransform(1, 0, 0, 1, 0, 0);
         sctx.globalCompositeOperation = 'source-over';
         sctx.clearRect(0, 0, shade.width, shade.height);
-        sctx.setTransform(1 / P, 0, 0, 1 / P, 0, 0);
+        sctx.setTransform(1 / P, 0, 0, 1 / P, SHADE_PAD / P, SHADE_PAD / P);
         sctx.beginPath();
         const far = ([px, py]) => { const dx = px - ex, dy = py - ey, m = Math.hypot(dx, dy) || 1; return [px + dx / m * FAR, py + dy / m * FAR]; };
         const quad = (a, b) => {
@@ -140,7 +142,7 @@
         ctx.save();
         ctx.imageSmoothingEnabled = false;
         ctx.globalAlpha = 0.88;
-        ctx.drawImage(shade, 0, 0, W, W);
+        ctx.drawImage(shade, -SHADE_PAD, -SHADE_PAD, W + 2 * SHADE_PAD, W + 2 * SHADE_PAD);
         ctx.restore();
     }
 
@@ -327,8 +329,8 @@
         // viewport box (drawn wrapped)
         ctx.strokeStyle = 'rgba(0,255,0,0.6)';
         ctx.lineWidth = 1;
-        const vx = ox + (cam.x - VIEW / 2) * s, vy = oy + (cam.y - VIEW / 2) * s;
-        for (const dx of [-N * s, 0, N * s]) for (const dy of [-N * s, 0, N * s]) ctx.strokeRect(vx + dx, vy + dy, VIEW * s, VIEW * s);
+        const vh = viewHalf(), vx = ox + (cam.x - vh) * s, vy = oy + (cam.y - vh) * s;
+        for (const dx of [-N * s, 0, N * s]) for (const dy of [-N * s, 0, N * s]) ctx.strokeRect(vx + dx, vy + dy, 2 * vh * s, 2 * vh * s);
         if (Math.floor(now / 200) % 2 || G.mode !== 'play') {
             ctx.fillStyle = '#fff';
             ctx.fillRect(ox + G.snake[0].x * s - 1.5, oy + G.snake[0].y * s - 1.5, 4.5, 4.5);
@@ -432,11 +434,13 @@
         setText(el.dash, dash.busy ? 'DIG!' : dash.cool > 0 ? Math.ceil(dash.cool / 1000) + 's' : 'READY');
         el.dash.style.color = dash.busy ? '#c89c62' : dash.cool > 0 ? '#666' : '';
         el.btnCoat.classList.toggle('on', coat.disguised);
-        el.btnCoat.classList.toggle('cool', coat.cool > 0);
+        el.btnCoat.classList.toggle('cool', coat.cool > 0 && G.mode === 'play');
         el.btnDash.classList.toggle('on', dash.busy);
-        el.btnDash.classList.toggle('cool', dash.cool > 0);
+        el.btnDash.classList.toggle('cool', dash.cool > 0 && G.mode === 'play');
         setText(el.btnPause, G.mode === 'paused' ? 'GO' : G.mode === 'over' ? 'AGAIN' : 'PAUSE');
-        setText(el.btnCoat, G.mode === 'ready' || G.mode === 'over' ? 'NEW' : 'COAT');
+        const menu = G.mode === 'ready' || G.mode === 'over';
+        setText(el.btnCoat, menu ? 'NEW' : 'COAT');
+        setText(el.btnDash, menu ? 'LEVEL' : 'DIG');
         const kin = K.state, f = n => (n >= 0 ? ' ' : '−') + Math.abs(n).toFixed(2);
         el.kin.innerHTML = `<span class="v">ẋ (${f(kin.v.x)},${f(kin.v.y)})</span> &nbsp; <span class="a">ẍ (${f(kin.a.x)},${f(kin.a.y)})</span>`;
     }
@@ -448,6 +452,11 @@
         ctx.imageSmoothingEnabled = false;
         ctx.fillStyle = 'black';
         ctx.fillRect(0, 0, W, canvas.height);
+
+        // The world is drawn zoomed about the screen centre; the minimap, ladder and overlays are not.
+        ctx.save();
+        const z = cam.z;
+        ctx.setTransform(z, 0, 0, z, W / 2 * (1 - z), W / 2 * (1 - z));
         drawFloor();
         drawPellets(now);
         SM.dash.drawFloor(now);    // holes, ridges and the racing mound sit on the ground...
@@ -465,6 +474,7 @@
         drawSnake(now);
         G.ghosts.forEach(g => { if (g.active) drawGhost(g, now); });
         fx.draw('over', now);
+        ctx.restore();
 
         if (G.opts.minimap) drawMinimap(now);
         SM.heal.draw(now);
@@ -476,26 +486,30 @@
             G.flash = Math.max(0, G.flash - dt / 400);
         }
 
-        const touch = document.documentElement.classList.contains('touch');
+        // Hints name the controls you're holding: a gamepad, the touch pad, or the keyboard.
+        const cls = document.documentElement.classList;
+        const pad = cls.contains('gamepad'), touch = cls.contains('touch');
+        const say = (keys, tap, btn) => pad ? btn : touch ? tap : keys;
         const LEVEL_COLOR = { easy: '#6f6', normal: '#FFD700', hard: '#f55' };
+        const LV = G.level.toUpperCase();
         if (G.mode === 'ready') drawOverlay([
             ['SNAKE-MAN', 32, '#FFD700'],
-            [touch ? 'PUSH THE STICK' : 'PRESS AN ARROW KEY', 14, '#0f0'],
-            ['LEVEL: ' + G.level.toUpperCase() + (touch ? '' : '   (L TO CHANGE)'), 12, LEVEL_COLOR[G.level]],
+            [say('PRESS AN ARROW KEY', 'PUSH THE STICK', 'PUSH THE STICK'), 14, '#0f0'],
+            ['LEVEL: ' + LV + say('   (L TO CHANGE)', '   (TAP LEVEL)', '   (A TO CHANGE)'), 12, LEVEL_COLOR[G.level]],
             ['5:00 ON THE CLOCK - MAP #' + G.mapSeed, 10, '#999'],
-            [touch ? 'DIG: BURROW UNDER WALLS' : 'SHIFT: DASH - BURROW UNDER WALLS', 10, '#c89c62'],
-            [touch ? 'COAT: PASS AS A GHOST' : 'ESC: TURNCOAT - PASS AS A GHOST', 10, SM.coat.COAT_COLOR],
+            [say('SHIFT: DASH', 'DIG', 'A: DIG') + ' - BURROW UNDER WALLS', 10, '#c89c62'],
+            [say('ESC: TURNCOAT', 'COAT', 'B: TURNCOAT') + ' - PASS AS A GHOST', 10, SM.coat.COAT_COLOR],
             ['CLIMB THE LADDER TO HEAL', 10, '#ff5577'],
-            touch ? ['NEW: NEW MAP', 10, '#777'] : ['N: NEW MAP   C: CRT   O: SHADOWS', 10, '#777'],
+            [say('N: NEW MAP   C: CRT   O: SHADOWS', 'NEW: NEW MAP', 'B: NEW MAP   X: ZOOM   Y: PAUSE'), 10, '#777'],
         ]);
-        if (G.mode === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], [touch ? 'TAP GO TO RESUME' : 'SPACE TO RESUME', 12, '#999']]);
+        if (G.mode === 'paused') drawOverlay([['PAUSED', 32, '#0f0'], [say('SPACE TO RESUME', 'TAP GO TO RESUME', 'Y TO RESUME'), 12, '#999']]);
         if (G.mode === 'over') drawOverlay([
             [G.overReason, 30, G.overReason === 'TIME UP' ? '#FFD700' : '#f33'],
             ['SCORE ' + G.score, 18, '#FFD700'],
-            [G.level.toUpperCase() + ' BEST ' + G.hi + (touch ? '' : '   L: LEVEL'), 10, LEVEL_COLOR[G.level]],
+            [LV + ' BEST ' + G.hi + say('   L: LEVEL', '   (TAP LEVEL)', '   A: LEVEL'), 10, LEVEL_COLOR[G.level]],
             ['LADDER RUNG ' + (SM.heal.rung + 1), 10, '#ff5577'],
-            [touch ? 'AGAIN: SAME MAP' : 'ENTER/SPACE: SAME MAP', 10, '#999'],
-            [touch ? 'NEW: NEW MAP' : 'N: NEW MAP   G: SAVE RUN LOG', 10, '#999'],
+            [say('ENTER/SPACE: SAME MAP', 'AGAIN: SAME MAP', 'Y: SAME MAP'), 10, '#999'],
+            [say('N: NEW MAP   G: SAVE RUN LOG', 'NEW: NEW MAP', 'B: NEW MAP'), 10, '#999'],
         ]);
 
         present(now);

@@ -1,0 +1,847 @@
+extends RefCounted
+# parsed modules: __MODULES__
+# __VERBS__
+# Clyde aims at the trail centroid. A disguise also shrugs off a lunge.
+
+const TILE_COUNT := __TILE_COUNT__
+const VIEW := __VIEW__
+const TIME_LIMIT_MS := __TIME_LIMIT_MS__
+const TIME_LABEL := "__TIME_LABEL__"
+const START_LIVES := __START_LIVES__
+const MAX_LIVES := __MAX_LIVES__
+const PELLET_SCORE := __PELLET_SCORE__
+const RAINBOW_SCORE := __RAINBOW_SCORE__
+const ZONE_0 := __ZONE_0__
+const ZONE_1 := __ZONE_1__
+const ZONE_2 := __ZONE_2__
+const GHOST_BLINKY := "__GHOST_BLINKY__"
+const GHOST_PINKY := "__GHOST_PINKY__"
+const GHOST_INKY := "__GHOST_INKY__"
+const GHOST_CLYDE := "__GHOST_CLYDE__"
+const DASH_TILES := __DASH_TILES__
+const DASH_MIN := __DASH_MIN__
+const DASH_COOL_MS := __DASH_COOL_MS__
+const INVULN_MS := __INVULN_MS__
+const SELF_INVULN_MS := __SELF_INVULN_MS__
+const FORAGE_GOAL := __FORAGE_GOAL__
+const FORAGE_WIN := __FORAGE_WIN__
+const BANK_POINTS := __BANK_POINTS__
+const TRAITOR_MS := __TRAITOR_MS__
+const BUSTED_COOL_MS := __BUSTED_COOL_MS__
+const COAT_MS := __COAT_MS__
+const COAT_COOL_MS := __COAT_COOL_MS__
+const LUNGE_OVERSHOOT := __LUNGE_OVERSHOOT__
+const V_GAIN := __V_GAIN__
+const A_GAIN := __A_GAIN__
+const PINKY_LEAD := __PINKY_LEAD__
+const INKY_LEAD := __INKY_LEAD__
+const GHOST_BASE := __GHOST_BASE__
+const CHAIN_CAP := __CHAIN_CAP__
+
+class Ghost extends RefCounted:
+	var name: String = ""
+	var immune: bool = false
+	var active: bool = true
+	var state: String = "hunt"
+	var x: int = 0
+	var y: int = 0
+	var dir: Vector2i = Vector2i(1, 0)
+	var t: int = 0
+	var acc: float = 0.0
+	var cool: int = 0
+	var locked: bool = false
+	var aim_ms: float = 0.0
+	var lock_ms: float = 0.0
+	var target: Vector2i = Vector2i.ZERO
+	var lunge_left: int = 0
+	var traitor: int = 0
+
+var mode: String = "ready"
+var over_reason: String = ""
+var score: int = 0
+var hi: int = 0
+var lives: int = START_LIVES
+var time_left: int = TIME_LIMIT_MS
+var eaten: int = 0
+var stage: int = 0
+var snake: Array = []
+var direction: Vector2i = Vector2i(1, 0)
+var input_queue: Array = []
+var ghosts: Array = []
+var pellets: Dictionary = {}
+var walls: PackedByteArray = PackedByteArray()
+var invuln: int = 0
+var prism: float = 0.0
+var prism_chain: int = 0
+var disguised: bool = false
+var coat_t: int = 0
+var coat_cool: int = 0
+var dig_cool: int = 0
+var acc: float = 0.0
+var rung: int = 0
+var forage_times: Array = []
+var forage_have: int = 0
+var kin_ux: float = 0.0
+var kin_uy: float = 0.0
+var kin_vx: float = 0.0
+var kin_vy: float = 0.0
+var kin_ax: float = 0.0
+var kin_ay: float = 0.0
+var kin_trail: Array = []
+var map_seed: int = 1
+
+func tile_count() -> int:
+	return TILE_COUNT
+
+func view_size() -> int:
+	return VIEW
+
+func time_label() -> String:
+	return TIME_LABEL
+
+func zone_thresholds() -> Array:
+	return [ZONE_0, ZONE_1, ZONE_2]
+
+func ghost_names() -> PackedStringArray:
+	return PackedStringArray([GHOST_BLINKY, GHOST_PINKY, GHOST_INKY, GHOST_CLYDE])
+
+func ghost_blinky() -> String:
+	return GHOST_BLINKY
+
+func pellet_score() -> int:
+	return PELLET_SCORE
+
+func rainbow_score() -> int:
+	return RAINBOW_SCORE
+
+func start_lives() -> int:
+	return START_LIVES
+
+func max_lives() -> int:
+	return MAX_LIVES
+
+func forage_goal() -> int:
+	return FORAGE_GOAL
+
+func bank_for(which: int) -> int:
+	return BANK_POINTS * (which + 1)
+
+func dash_tiles() -> int:
+	return DASH_TILES
+
+func dash_cool_ms() -> int:
+	return DASH_COOL_MS
+
+func invuln_ms() -> int:
+	return INVULN_MS
+
+func self_invuln_ms() -> int:
+	return SELF_INVULN_MS
+
+func ghost_base() -> int:
+	return GHOST_BASE
+
+func chain_cap() -> int:
+	return CHAIN_CAP
+
+func traitor_ms() -> int:
+	return TRAITOR_MS
+
+func busted_cool_ms() -> int:
+	return BUSTED_COOL_MS
+
+func boot_line() -> String:
+	return "Snake-Man boot length=%d time_left=%s" % [snake.size(), TIME_LABEL]
+
+func played_ms() -> int:
+	return TIME_LIMIT_MS - time_left
+
+func fresh(seed: int) -> void:
+	map_seed = seed
+	mode = "ready"
+	over_reason = ""
+	score = 0
+	lives = START_LIVES
+	time_left = TIME_LIMIT_MS
+	eaten = 0
+	stage = 0
+	invuln = 0
+	prism = 0.0
+	prism_chain = 0
+	disguised = false
+	coat_t = 0
+	coat_cool = 0
+	dig_cool = 0
+	acc = 0.0
+	rung = 0
+	forage_times = []
+	forage_have = 0
+	pellets = {}
+	ghosts = []
+	input_queue = []
+	walls = PackedByteArray()
+	walls.resize(TILE_COUNT * TILE_COUNT)
+	walls.fill(0)
+	place(10, 10, Vector2i(1, 0))
+	_build_fence()
+	set_pellet(18, 14, 1)
+	set_pellet(24, 16, 1)
+	set_pellet(30, 18, 2)
+	place_ghost(GHOST_BLINKY, 70, 70, true)
+	place_ghost(GHOST_PINKY, 20, 70, false)
+	place_ghost(GHOST_INKY, 70, 20, false)
+	place_ghost(GHOST_CLYDE, 50, 60, false)
+
+func clear_ghosts() -> void:
+	ghosts.clear()
+
+func clear_walls() -> void:
+	walls.fill(0)
+
+func fence_count() -> int:
+	var n := 0
+	for i in walls.size():
+		if walls[i] == 2:
+			n += 1
+	return n
+
+func wall_at(x: int, y: int) -> int:
+	return int(walls[_idx(x, y)])
+
+func set_wall(x: int, y: int, kind: int) -> void:
+	walls[_idx(x, y)] = kind
+
+func set_pellet(x: int, y: int, kind: int) -> void:
+	var i := _idx(x, y)
+	if kind == 0:
+		pellets.erase(i)
+	else:
+		pellets[i] = kind
+
+func pellet_at(x: int, y: int) -> int:
+	return int(pellets.get(_idx(x, y), 0))
+
+func head() -> Vector2i:
+	var s: Vector3i = snake[0]
+	return Vector2i(s.x, s.y)
+
+func snake_length() -> int:
+	return snake.size()
+
+func queue_len() -> int:
+	return input_queue.size()
+
+func set_head_under(under: bool) -> void:
+	var s: Vector3i = snake[0]
+	s.z = 1 if under else 0
+	snake[0] = s
+
+func place(x: int, y: int, d: Vector2i) -> void:
+	_place(x, y, d)
+
+func set_snake(cells: Array, d: Vector2i) -> void:
+	snake.clear()
+	for c in cells:
+		var v: Vector2i = c
+		snake.append(Vector3i(v.x, v.y, 0))
+	direction = d
+	input_queue.clear()
+	acc = 0.0
+	if cells.size() > 0:
+		var h: Vector2i = cells[0]
+		_kin_reset(h.x, h.y, d)
+
+func place_ghost(ghost_name: String, x: int, y: int, immune: bool) -> Ghost:
+	var g := Ghost.new()
+	g.name = ghost_name
+	g.immune = immune
+	g.active = true
+	g.state = "hunt"
+	g.x = ring(x)
+	g.y = ring(y)
+	g.dir = Vector2i(1, 0)
+	g.target = Vector2i(g.x, g.y)
+	ghosts.append(g)
+	return g
+
+func queue_dir(d: Vector2i) -> void:
+	if mode == "ready":
+		mode = "play"
+	if mode != "play":
+		return
+	var last := direction
+	if input_queue.size() > 0:
+		last = input_queue[input_queue.size() - 1]
+	if d.x == -last.x and d.y == -last.y:
+		return
+	if d.x == last.x and d.y == last.y:
+		return
+	if input_queue.size() < 2:
+		input_queue.append(d)
+
+func toggle_pause() -> void:
+	if mode == "play":
+		mode = "paused"
+	elif mode == "paused":
+		mode = "play"
+	elif mode == "over":
+		var kept := hi
+		fresh(map_seed)
+		hi = kept
+		mode = "ready"
+
+func turncoat() -> void:
+	if mode != "play":
+		return
+	if disguised:
+		disguised = false
+		coat_cool = COAT_COOL_MS
+		return
+	if coat_cool > 0:
+		return
+	disguised = true
+	coat_t = COAT_MS
+
+func dig() -> bool:
+	if mode != "play" or snake.is_empty() or dig_cool > 0:
+		return false
+	if input_queue.size() > 0:
+		direction = input_queue.pop_front()
+	var h: Vector3i = snake[0]
+	var path: Array = []
+	for k in range(1, DASH_TILES + 1):
+		var x := ring(h.x + direction.x * k)
+		var y := ring(h.y + direction.y * k)
+		if is_fence(x, y):
+			break
+		path.append(Vector2i(x, y))
+	var land := -1
+	for k in range(path.size(), 0, -1):
+		if k < DASH_MIN:
+			break
+		var c: Vector2i = path[k - 1]
+		if is_wall(c.x, c.y):
+			continue
+		land = k
+		break
+	if land < DASH_MIN:
+		dig_cool = 300
+		return false
+	for i in land:
+		_advance(direction, i != land - 1)
+		if mode != "play":
+			return false
+	dig_cool = DASH_COOL_MS
+	_check_contacts(true)
+	return true
+
+func dt_for_one_step() -> int:
+	var need := player_step_ms() - acc
+	if need < 1.0:
+		need = 1.0
+	return int(ceil(need))
+
+func update(dt: int) -> void:
+	if mode != "play":
+		return
+	time_left -= dt
+	if time_left <= 0:
+		time_left = 0
+		end_run("TIME UP")
+		return
+	dig_cool = maxi(0, dig_cool - dt)
+	invuln = maxi(0, invuln - dt)
+	prism = max(0.0, prism - float(dt))
+	if disguised:
+		coat_t -= dt
+		if coat_t <= 0:
+			disguised = false
+			coat_cool = COAT_COOL_MS
+	else:
+		coat_cool = maxi(0, coat_cool - dt)
+	_tick_player(dt)
+	if mode != "play":
+		return
+	_tick_ghosts(dt)
+
+func enter_state(g: Ghost, next: String) -> void:
+	g.state = next
+	g.t = 0
+	g.acc = 0.0
+	if next == "aim":
+		g.locked = false
+		g.aim_ms = _aim_ms()
+		g.lock_ms = min(g.aim_ms * 0.45, _lock_cap())
+		g.target = law_cell(g.name)
+	elif next == "lunge":
+		var dist := _tdist(g.x, g.y, g.target.x, g.target.y)
+		g.lunge_left = mini(_lunge_max(), dist + LUNGE_OVERSHOOT)
+	elif next == "daze":
+		g.locked = false
+
+func law_cell(ghost_name: String) -> Vector2i:
+	if ghost_name == GHOST_BLINKY:
+		return _to_cell(_predict(0, 0.0))
+	if ghost_name == GHOST_PINKY:
+		return _to_cell(_predict(1, float(PINKY_LEAD)))
+	if ghost_name == GHOST_INKY:
+		return _to_cell(_predict(2, float(INKY_LEAD)))
+	return _to_cell(_centroid())
+
+func set_kinematics(ux: float, uy: float, vx: float, vy: float, ax: float, ay: float, trail: Array) -> void:
+	kin_ux = ux
+	kin_uy = uy
+	kin_vx = vx
+	kin_vy = vy
+	kin_ax = ax
+	kin_ay = ay
+	kin_trail = trail.duplicate()
+
+func lunge_step_ms() -> float:
+	return _lunge_step_ms()
+
+func player_step_ms() -> float:
+	return lerpf(150.0, 100.0, _smooth(0.0, 0.45, _heat()))
+
+func ring(v: int) -> int:
+	var r := v % TILE_COUNT
+	if r < 0:
+		r += TILE_COUNT
+	return r
+
+func is_wall(x: int, y: int) -> bool:
+	return walls[_idx(x, y)] != 0
+
+func is_fence(x: int, y: int) -> bool:
+	return walls[_idx(x, y)] == 2
+
+func is_opaque(x: int, y: int) -> bool:
+	return walls[_idx(x, y)] == 1
+
+func end_run(reason: String) -> void:
+	mode = "over"
+	over_reason = reason
+	if score > hi:
+		hi = score
+
+func _idx(x: int, y: int) -> int:
+	return ring(y) * TILE_COUNT + ring(x)
+
+func _build_fence() -> void:
+	for i in walls.size():
+		if walls[i] == 2:
+			walls[i] = 0
+	if stage >= 3:
+		return
+	for x in TILE_COUNT:
+		_set_fence(x, 0)
+		_set_fence(x, TILE_COUNT - 1)
+	for y in TILE_COUNT:
+		_set_fence(0, y)
+		_set_fence(TILE_COUNT - 1, y)
+
+func _set_fence(x: int, y: int) -> void:
+	var i := _idx(x, y)
+	if walls[i] == 0:
+		walls[i] = 2
+
+func _place(x: int, y: int, d: Vector2i) -> void:
+	snake.clear()
+	for k in 3:
+		snake.append(Vector3i(ring(x - d.x * k), ring(y - d.y * k), 0))
+	direction = d
+	input_queue.clear()
+	acc = 0.0
+	_kin_reset(x, y, d)
+
+func _kin_reset(x: int, y: int, d: Vector2i) -> void:
+	kin_ux = float(x)
+	kin_uy = float(y)
+	kin_vx = float(d.x)
+	kin_vy = float(d.y)
+	kin_ax = 0.0
+	kin_ay = 0.0
+	kin_trail = []
+
+func _kin_step(d: Vector2i) -> void:
+	kin_ux += float(d.x)
+	kin_uy += float(d.y)
+	var nvx := kin_vx + (float(d.x) - kin_vx) * V_GAIN
+	var nvy := kin_vy + (float(d.y) - kin_vy) * V_GAIN
+	kin_ax += ((nvx - kin_vx) - kin_ax) * A_GAIN
+	kin_ay += ((nvy - kin_vy) - kin_ay) * A_GAIN
+	kin_vx = nvx
+	kin_vy = nvy
+	kin_trail.append(Vector2(kin_ux, kin_uy))
+	if kin_trail.size() > 40:
+		kin_trail.pop_front()
+
+func _predict(order: int, lead: float) -> Vector2:
+	if order <= 0:
+		return Vector2(kin_ux, kin_uy)
+	if order == 1:
+		return Vector2(kin_ux + kin_vx * lead, kin_uy + kin_vy * lead)
+	var px := kin_ux
+	var py := kin_uy
+	var vx := kin_vx
+	var vy := kin_vy
+	var ax := kin_ax
+	var ay := kin_ay
+	var steps := int(ceil(lead))
+	for i in steps:
+		var f: float = min(1.0, lead - float(i))
+		vx += ax
+		vy += ay
+		ax *= 0.85
+		ay *= 0.85
+		var mag := sqrt(vx * vx + vy * vy)
+		if mag > 1.0:
+			vx /= mag
+			vy /= mag
+		px += vx * f
+		py += vy * f
+	return Vector2(px, py)
+
+func _centroid() -> Vector2:
+	if kin_trail.is_empty():
+		return Vector2(kin_ux, kin_uy)
+	var sx := 0.0
+	var sy := 0.0
+	for p in kin_trail:
+		var v: Vector2 = p
+		sx += v.x
+		sy += v.y
+	return Vector2(sx / float(kin_trail.size()), sy / float(kin_trail.size()))
+
+func _to_cell(p: Vector2) -> Vector2i:
+	return Vector2i(ring(js_round(p.x)), ring(js_round(p.y)))
+
+func js_round(v: float) -> int:
+	return int(floor(v + 0.5))
+
+func wdelta(a: int, b: int) -> int:
+	var d := ring(b - a)
+	if d > TILE_COUNT / 2:
+		d -= TILE_COUNT
+	return d
+
+func _tdist(ax: int, ay: int, bx: int, by: int) -> int:
+	return absi(wdelta(ax, bx)) + absi(wdelta(ay, by))
+
+func _heat() -> float:
+	var played := float(played_ms()) / 240000.0
+	return clampf(0.75 * played + 0.25 * min(1.0, float(score) / 600.0), 0.0, 1.0)
+
+func _heat_e() -> float:
+	return _smooth(0.0, 1.0, _heat())
+
+func _smooth(e0: float, e1: float, x: float) -> float:
+	var t := clampf((x - e0) / (e1 - e0), 0.0, 1.0)
+	return t * t * (3.0 - 2.0 * t)
+
+func _aim_ms() -> float:
+	return lerpf(1400.0, 900.0, _heat_e()) * lerpf(1.15, 0.8, 0.5)
+
+func _lock_cap() -> float:
+	return lerpf(520.0, 330.0, _heat_e())
+
+func _lunge_step_ms() -> float:
+	return max(60.0, lerpf(110.0, 78.0, _heat_e()))
+
+func _lunge_max() -> int:
+	return int(round(lerpf(12.0, 17.0, _heat_e()) * lerpf(0.85, 1.2, 0.5)))
+
+func _attack_range() -> int:
+	return int(round(lerpf(7.0, 12.0, _heat_e()) * lerpf(0.85, 1.25, 0.5)))
+
+func _hunt_step_ms() -> float:
+	return max(player_step_ms() * 1.1, lerpf(440.0, 210.0, _heat_e()) / lerpf(0.85, 1.25, 0.5))
+
+func _tick_player(dt: int) -> void:
+	acc += float(dt)
+	var guard := 0
+	while mode == "play" and acc >= player_step_ms() and guard < 8:
+		guard += 1
+		acc -= player_step_ms()
+		_step()
+
+func _step() -> void:
+	if snake.is_empty() or mode != "play":
+		return
+	if input_queue.size() > 0:
+		direction = input_queue.pop_front()
+	var h: Vector3i = snake[0]
+	var nx := ring(h.x + direction.x)
+	var ny := ring(h.y + direction.y)
+	if is_wall(nx, ny):
+		if invuln > 0:
+			_relocate()
+			return
+		_lose_life()
+		return
+	var kind := pellet_at(nx, ny)
+	var limit := snake.size() if kind != 0 else snake.size() - 1
+	for i in limit:
+		var s: Vector3i = snake[i]
+		if s.z == 0 and s.x == nx and s.y == ny:
+			_self_hit()
+			return
+	_advance(direction, false)
+	if mode == "play":
+		_check_contacts(true)
+
+func _advance(d: Vector2i, under: bool) -> void:
+	var h: Vector3i = snake[0]
+	var nx := ring(h.x + d.x)
+	var ny := ring(h.y + d.y)
+	var kind := 0 if under else pellet_at(nx, ny)
+	snake.insert(0, Vector3i(nx, ny, 1 if under else 0))
+	_kin_step(d)
+	if kind != 0:
+		_eat(nx, ny, kind)
+	else:
+		snake.pop_back()
+
+func _eat(x: int, y: int, kind: int) -> void:
+	set_pellet(x, y, 0)
+	if kind == 2:
+		score += RAINBOW_SCORE
+		prism = lerpf(7000.0, 4500.0, _heat_e())
+		prism_chain = 0
+		for g in ghosts:
+			if g.active and not g.immune:
+				enter_state(g, "daze")
+	else:
+		score += PELLET_SCORE
+	eaten += 1
+	_grow_zones()
+	_note_forage()
+
+func _grow_zones() -> void:
+	var grew := false
+	while stage < 3 and eaten >= zone_thresholds()[stage]:
+		stage += 1
+		grew = true
+	if grew:
+		_build_fence()
+
+func _note_forage() -> void:
+	if rung != 0:
+		return
+	var now := played_ms()
+	var kept: Array = []
+	for ms in forage_times:
+		if now - int(ms) < FORAGE_WIN:
+			kept.append(ms)
+	kept.append(now)
+	forage_times = kept
+	forage_have = kept.size()
+	if forage_have >= FORAGE_GOAL:
+		_clear_rung()
+
+func _clear_rung() -> void:
+	if lives < MAX_LIVES:
+		lives += 1
+	else:
+		score += bank_for(rung)
+	rung = 1
+	forage_have = FORAGE_GOAL
+
+func _self_hit() -> void:
+	_relocate()
+	invuln = SELF_INVULN_MS
+
+func _lose_life() -> void:
+	lives -= 1
+	if lives <= 0:
+		end_run("OUT OF LIVES")
+		return
+	_relocate()
+	invuln = INVULN_MS
+
+func _relocate() -> void:
+	if snake.is_empty():
+		return
+	var h: Vector3i = snake[0]
+	var d := direction
+	for radius in range(1, TILE_COUNT):
+		for ox in range(-radius, radius + 1):
+			for oy in range(-radius, radius + 1):
+				if absi(ox) != radius and absi(oy) != radius:
+					continue
+				var x := ring(h.x + ox)
+				var y := ring(h.y + oy)
+				if _runway_clear(x, y, d):
+					_place(x, y, d)
+					return
+	_place(ring(h.x + 3), h.y, d)
+
+func _runway_clear(x: int, y: int, d: Vector2i) -> bool:
+	for k in range(-2, 3):
+		if is_wall(ring(x + d.x * k), ring(y + d.y * k)):
+			return false
+	return true
+
+func _check_contacts(by_player: bool) -> bool:
+	if snake.is_empty():
+		return false
+	var h: Vector3i = snake[0]
+	if h.z != 0:
+		return false
+	for g in ghosts:
+		if not g.active or g.x != h.x or g.y != h.y:
+			continue
+		if g.traitor > 0:
+			continue
+		if g.state == "daze":
+			if g.immune:
+				continue
+			_eat_ghost(g)
+			continue
+		if disguised and (g.state == "hunt" or g.state == "lunge"):
+			if g.state == "hunt" and (by_player or g.immune):
+				_sabotage(g)
+			continue
+		if invuln <= 0:
+			_lose_life()
+			return true
+	return false
+
+func _eat_ghost(g: Ghost) -> void:
+	var pts := GHOST_BASE
+	if prism > 0.0:
+		var sh := mini(CHAIN_CAP, prism_chain)
+		pts = GHOST_BASE * int(pow(2, sh))
+		prism_chain += 1
+	score += pts
+	g.active = false
+
+func _sabotage(g: Ghost) -> void:
+	if g.immune:
+		disguised = false
+		coat_cool = BUSTED_COOL_MS
+		return
+	g.traitor = TRAITOR_MS
+	g.state = "hunt"
+	g.cool = 0
+
+func _tick_ghosts(dt: int) -> void:
+	for g in ghosts:
+		_tick_ghost(g, dt)
+		if mode != "play":
+			return
+
+func _tick_ghost(g: Ghost, dt: int) -> void:
+	if not g.active or snake.is_empty():
+		return
+	g.t += dt
+	g.cool -= dt
+	if g.traitor > 0:
+		g.traitor = maxi(0, g.traitor - dt)
+	if g.state == "hunt":
+		g.acc += float(dt)
+		if g.acc >= _hunt_step_ms():
+			g.acc -= _hunt_step_ms()
+			_move_toward(g, law_cell(g.name))
+			if _check_contacts(false):
+				return
+		var h := head()
+		var dist := _tdist(g.x, g.y, h.x, h.y)
+		if g.cool <= 0 and invuln <= 0 and dist <= _attack_range() and not disguised:
+			enter_state(g, "aim")
+	elif g.state == "aim":
+		if float(g.t) < g.aim_ms - g.lock_ms:
+			g.target = law_cell(g.name)
+			g.locked = false
+		else:
+			g.locked = true
+		if float(g.t) >= g.aim_ms:
+			enter_state(g, "lunge")
+	elif g.state == "lunge":
+		g.acc += float(dt)
+		var guard := 0
+		while g.acc >= _lunge_step_ms() and g.state == "lunge" and mode == "play" and guard < 6:
+			guard += 1
+			g.acc -= _lunge_step_ms()
+			_lunge_step(g)
+	elif g.state == "daze":
+		g.acc += float(dt)
+		if g.acc >= 480.0:
+			g.acc -= 480.0
+			_move_away(g)
+			if _check_contacts(false):
+				return
+
+func _lunge_step(g: Ghost) -> void:
+	var dx := wdelta(g.x, g.target.x)
+	var dy := wdelta(g.y, g.target.y)
+	var d := g.dir
+	if g.x != g.target.x or g.y != g.target.y:
+		if absi(dx) >= absi(dy) and dx != 0:
+			d = Vector2i(signi(dx), 0)
+		elif dy != 0:
+			d = Vector2i(0, signi(dy))
+		if is_wall(ring(g.x + d.x), ring(g.y + d.y)):
+			if dy != 0 and d.y == 0:
+				var alt := Vector2i(0, signi(dy))
+				if not is_wall(ring(g.x + alt.x), ring(g.y + alt.y)):
+					d = alt
+			elif dx != 0 and d.x == 0:
+				var alt2 := Vector2i(signi(dx), 0)
+				if not is_wall(ring(g.x + alt2.x), ring(g.y + alt2.y)):
+					d = alt2
+	var nx := ring(g.x + d.x)
+	var ny := ring(g.y + d.y)
+	if is_wall(nx, ny):
+		enter_state(g, "daze")
+		return
+	g.dir = d
+	g.x = nx
+	g.y = ny
+	g.lunge_left -= 1
+	if _check_contacts(false):
+		return
+	if g.lunge_left <= 0 and g.state == "lunge":
+		enter_state(g, "daze")
+
+func _move_toward(g: Ghost, target: Vector2i) -> void:
+	var dx := wdelta(g.x, target.x)
+	var dy := wdelta(g.y, target.y)
+	var opts: Array = []
+	if dx == 0 and dy == 0:
+		return
+	if absi(dx) >= absi(dy) and dx != 0:
+		opts.append(Vector2i(signi(dx), 0))
+		if dy != 0:
+			opts.append(Vector2i(0, signi(dy)))
+	else:
+		opts.append(Vector2i(0, signi(dy)))
+		if dx != 0:
+			opts.append(Vector2i(signi(dx), 0))
+	for d in opts:
+		var step: Vector2i = d
+		var nx := ring(g.x + step.x)
+		var ny := ring(g.y + step.y)
+		if not is_wall(nx, ny):
+			g.dir = step
+			g.x = nx
+			g.y = ny
+			return
+
+func _move_away(g: Ghost) -> void:
+	var h := head()
+	var best := Vector2i.ZERO
+	var best_d := -1
+	for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var nx := ring(g.x + d.x)
+		var ny := ring(g.y + d.y)
+		if is_wall(nx, ny):
+			continue
+		var dist := _tdist(nx, ny, h.x, h.y)
+		if dist > best_d:
+			best_d = dist
+			best = d
+	if best_d >= 0:
+		g.dir = best
+		g.x = ring(g.x + best.x)
+		g.y = ring(g.y + best.y)

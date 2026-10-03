@@ -78,15 +78,48 @@
         }
         .legend b { font-weight: normal; }
         .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px 5px 2px 2px; margin-right: 6px; }
-        /* Touch pad: a joystick and two buttons, shown only in touch mode (html.touch: phones,
-           the Android app, or ?pad=1). */
+        /* Touch pad: a joystick and three buttons, shown only in touch mode (html.touch: phones,
+           the Android app, or ?pad=1). Touch mode never scrolls: the screen shrinks to fit. */
         .pad { display: none; }
-        html.touch body { justify-content: flex-start; padding-top: max(10px, env(safe-area-inset-top)); user-select: none; -webkit-user-select: none; }
+        html.touch, html.touch body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+        html.touch body {
+            justify-content: flex-start; min-height: 0; padding-top: max(10px, env(safe-area-inset-top));
+            user-select: none; -webkit-user-select: none;
+        }
         html.touch .stats { font-size: 11px; gap: 4px 16px; margin-bottom: 8px; }
         html.touch .kin, html.touch .help { display: none; }
+        html.touch canvas {   /* portrait: room for two rows of stats above and the pad below */
+            width: min(600px, 92vw, calc(100vh - 290px));
+            width: min(600px, 92vw, calc(100dvh - 290px));
+        }
         html.touch .pad {
             display: flex; align-items: center; justify-content: space-between;
             width: min(600px, 92vw); margin-top: 18px; touch-action: none;
+        }
+        /* Landscape (the app, a phone in a clip-on controller): stats over the stick on the left,
+           the screen as tall as the phone, the buttons on the right. */
+        @media (orientation: landscape) {
+            html.touch body {
+                display: grid; grid-template-columns: 1fr auto 1fr; grid-template-rows: 1fr 1fr;
+                grid-template-areas: "stats screen btns" "stick screen btns";
+                align-items: center; justify-items: center; column-gap: 16px;
+                padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+                         max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+            }
+            html.touch .stats { grid-area: stats; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0; }
+            html.touch canvas {
+                grid-area: screen;
+                width: min(600px, calc(100vh - 32px));
+                width: min(600px, calc(100dvh - 32px));
+            }
+            html.touch .pad { display: contents; }
+            html.touch .stick { grid-area: stick; }
+            html.touch .btns { grid-area: btns; }
+        }
+        /* A gamepad is connected: its own stick and buttons replace the on-screen ones. */
+        html.gamepad .stick, html.gamepad .btns { display: none; }
+        @media (orientation: landscape) {
+            html.touch.gamepad body { grid-template-areas: "stats screen ." "stats screen ."; }
         }
         .stick {
             position: relative; width: 150px; height: 150px; border-radius: 50%;
@@ -126,6 +159,7 @@
         <div>SCORE: <span id="score">0</span></div>
         <div>HI: <span id="hi">0</span></div>
         <div>LIVES: <span id="lives">3</span></div>
+        <div id="wallsBox">WALLS: <span id="walls"></span></div>
         <div>TIME: <span id="time">5:00</span></div>
         <div>ZONE: <span id="zone">1/4</span></div>
         <div>COAT: <span id="coat">READY</span></div>
@@ -145,7 +179,7 @@
     </div>
 
     <div class="help">
-        MOVE: ARROWS / WASD / SWIPE • <span style="color:#c89c62">SHIFT: DIG</span> UNDER WALLS • <span style="color:#b89cff">ESC: TURNCOAT</span> • SPACE PAUSE • V SOUND<br>
+        MOVE: ARROWS / WASD / SWIPE • <span style="color:#c89c62">SHIFT: DIG</span> UNDER WALLS • <span style="color:#b89cff">ESC: TURNCOAT</span> • SPACE PAUSE • V SOUND • − / = ZOOM<br>
         EAT DOTS, SCORE BEFORE 5:00 • <span style="color:#55f">WALLS</span> COST A LIFE • <span class="rainbow">RAINBOWS</span> MAKE GHOSTS EDIBLE • <span style="color:#f33">CHERRIES</span> x2 SCORE<br>
         WHEN A RETICLE LOCKS, <span style="color:#ddd">BREAK YOUR RHYTHM</span>
         <div class="legend">
@@ -165,6 +199,7 @@
     <script src="snake-man/pellets.js"></script>
     <script src="snake-man/gfx.js"></script>
     <script src="snake-man/fx.js"></script>
+    <script src="snake-man/music.js"></script>
     <script src="snake-man/sfx.js"></script>
     <script src="snake-man/anim.js"></script>
     <script src="snake-man/ghosts.js"></script>
@@ -174,6 +209,8 @@
     <script src="snake-man/heal.js"></script>
     <script src="snake-man/render.js"></script>
     <script src="snake-man/input.js"></script>
+    <script src="snake-man/gamepad.js"></script>
+    <script src="snake-man/runlog.js"></script>
     <script src="snake-man/game.js"></script>
 </body>
 </html>

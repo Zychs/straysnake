@@ -110,11 +110,26 @@
         // --- THE TOROIDAL WRAP LOGIC ---
         const head = { x: wrap(S[0].x + d.x), y: wrap(S[0].y + d.y) };
 
+        // Easy mode: a wall bumper turns you left or right instead of crashing, while any last.
+        if (M.isWall(head.x, head.y) && G.bumpers > 0) {
+            const free = SM.core.DIRS.filter(o => o.x !== -d.x || o.y !== -d.y).filter(o => o !== d && !(o.x === d.x && o.y === d.y))
+                .filter(o => { const t = { x: wrap(S[0].x + o.x), y: wrap(S[0].y + o.y) };
+                    return !M.isWall(t.x, t.y) && !S.some(s => !s.under && s.x === t.x && s.y === t.y); });
+            if (free.length) {
+                const turn = free[Math.floor(Math.random() * free.length)];
+                G.bumpers--;
+                G.direction = turn; G.inputQueue = [];
+                fx.popup(S[0].x, S[0].y - 1, 'BUMP ' + G.bumpers, '#6f6');
+                emit('bump', { left: G.bumpers, turn: [turn.x, turn.y] });
+                head.x = wrap(S[0].x + turn.x); head.y = wrap(S[0].y + turn.y);
+            }
+        }
+
         if (M.isWall(head.x, head.y)) {
             if (M.isOpaque(head.x, head.y)) fx.popup(head.x, head.y, 'CRASH', '#55f');
             else fx.popup(head.x, head.y, 'ZAP', '#f6f');
             if (G.invuln > 0) { respawnNear(); return; } // grace period: just get put back on the road
-            loseLife();
+            loseLife(M.isOpaque(head.x, head.y) ? 'wall' : 'fence');
             return;
         }
 
@@ -130,7 +145,7 @@
             }
         }
 
-        advance(d);
+        advance(G.direction);
         checkContacts(true);
     }
 
@@ -152,7 +167,7 @@
                 if (byPlayer || g.immune) SM.coat.sabotage(g);   // ...but the armored one notices any bump
                 continue;
             }
-            if (G.invuln <= 0) { g.fit += 3; loseLife(); return true; }
+            if (G.invuln <= 0) { g.fit += 3; loseLife('ghost:' + g.name + ':' + g.state); return true; }
         }
         return false;
     }
@@ -165,10 +180,10 @@
         g.active = false;  // gone for good; the chunk director breeds a replacement from fitter stock
     }
 
-    function loseLife() {
+    function loseLife(cause = 'unknown') {
         G.lives--;
         G.flash = 1;
-        emit('hit');
+        emit('hit', cause);
         if (G.lives <= 0) { SM.game.end('OUT OF LIVES'); return; }
         // The world persists: respawn near where you fell, and back off anyone mid-attack.
         respawnNear();

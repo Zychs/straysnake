@@ -7,7 +7,7 @@
 
     function init() {
         M.generate(G.mapSeed);
-        G.score = 0; G.lives = START_LIVES; G.eaten = 0;
+        G.score = 0; G.lives = START_LIVES; G.eaten = 0; G.bumpers = SM.dial.LEVELS[G.level].bumpers;
         G.timeLeft = TIME_LIMIT_MS;
         G.overReason = '';
         G.ghosts = [];
@@ -32,14 +32,16 @@
         if (newMap) G.mapSeed = M.newSeed();
         init();
         G.mode = 'ready';
+        SM.runlog.start();
     }
 
     function end(reason) {
         G.mode = 'over';
         G.overReason = reason;
+        SM.runlog.finish(reason);
         if (G.score > G.hi) {
             G.hi = G.score;
-            store.set('snakeman-hi', G.hi);
+            store.set(SM.dial.hiKey(G.level), G.hi);
         }
     }
 
